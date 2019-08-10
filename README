@@ -130,7 +130,7 @@ IIPImage is able to decode JPEG2000 images via the open source OpenJPEG
 library (http://www.openjpeg.org/). Activated if OpenJPEG development
 files found in system path or path provided via
 
-    --enable-openjpeg=/path/to/openjpeg/distribution
+    --with-openjpeg=/path/to/openjpeg/distribution
 
 OpenJPEG will be disabled if Kakadu support has been requested or --disable-openjpeg used.
 
@@ -499,7 +499,7 @@ For example with lighttpd:
 
 
 ------------------------------------------------------------------------------------
-Please refer to the project site http://iipimage.sourceforge.net for further details
+Please refer to the project site https://iipimage.sourceforge.io for further details
 
 ------------------------------------------------------------------------------------
 (c) 2000-2019 Ruven Pillay <ruven@users.sourceforge.net>
