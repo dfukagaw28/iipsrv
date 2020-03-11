@@ -2,7 +2,7 @@ About The Docker Image
 ======================
 
 This repository [dfukagaw28/iipsrv](https://github.com/dfukagaw28/iipsrv) is forked from [ruven/iipsrv](https://github.com/ruven/iipsrv).
-This fork to provide a place for maintaining a docker image of IIPImage Server.
+You can get the docker image from https://hub.docker.com/r/dfukagaw28/iipsrv
 
 [![](https://images.microbadger.com/badges/image/dfukagaw28/iipsrv.svg)](https://microbadger.com/images/dfukagaw28/iipsrv "Get your own image badge on microbadger.com")
 
