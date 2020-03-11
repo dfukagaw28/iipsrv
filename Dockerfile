@@ -1,4 +1,4 @@
-FROM debian:stretch-slim AS build
+FROM debian:buster-slim AS build
 
 ARG VCS_REF
 
@@ -44,7 +44,7 @@ RUN set -ex \
     && make
 
 
-FROM debian:stretch-slim
+FROM debian:buster-slim
 
 COPY --from=build /usr/local/src/iipsrv/src/iipsrv.fcgi /usr/local/bin/iipsrv.fcgi
 
