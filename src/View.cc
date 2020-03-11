@@ -1,7 +1,7 @@
 /*
     View Member Functions
 
-    Copyright (C) 2004-2016 Ruven Pillay.
+    Copyright (C) 2004-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,37 +28,39 @@ using namespace std;
 void View::calculateResolution( unsigned int dimension,
 				unsigned int requested_size ){
 
-  unsigned int j = 1;
+  // Start from the highest resolution
+  int j = max_resolutions - 1;
   unsigned int d = dimension;
 
+  // Make sure we have a minimum size
   if( requested_size < min_size ) requested_size = min_size;
   unsigned int rs = (requested_size<min_size) ? min_size : requested_size;
 
-  // Calculate the resolution number for this request
-  while( d >= rs ){
-    d = d/2;
-    j++;
+  // Find the resolution level closest but higher than the requested size
+  while( true ){
+    d = (unsigned int) floor( d/2.0 );
+    if( d < rs ) break;
+    j--;
   }
 
   // Limit j to the maximum resolution
-  if( j > max_resolutions+1 ) j = max_resolutions + 1;
+  if( j < 0 ) j = 0;
+  if( j > (int)(max_resolutions-1) ) j = max_resolutions - 1;
 
-  // Only set this if our requested resolution is greater than that
-  // that has already been set.
-  if( resolution > (int)max_resolutions - (int)j + 1 ) resolution = (int)max_resolutions - (int)j + 1;
-
-  // Make sure our value is possible
-  if( resolution > (signed int)(max_resolutions-1) ) resolution = max_resolutions - 1;
-  if( resolution < 0 ) resolution = 0;
+  // Only update value of resolution if our calculated resolution is greater than that has already been set
+  if( j > resolution ) resolution = j;
 
 }
 
 
+/// Calculate the optimal resolution and the size of this resolution for the requested view,
+/// taking into account any maximum size settings
 unsigned int View::getResolution(){
 
   unsigned int i;
 
-  resolution = max_resolutions - 1;
+  // Reset our resolution level to the smallest available
+  resolution = 0;
 
   // Note that we use floor() as that is how our resolutions are calculated
   if( requested_width ) View::calculateResolution( width, floor((float)requested_width/(float)view_width) );
@@ -67,18 +69,20 @@ unsigned int View::getResolution(){
   res_width = width;
   res_height = height;
 
-  // Calculate our new width and height based on the calculated resolution
+  // Calculate the width and height of this resolution
   for( i=1; i < (max_resolutions - resolution); i++ ){
     res_width = (int) floor(res_width / 2.0);
     res_height = (int) floor(res_height / 2.0);
   }
 
-  // Check if we need to use a smaller resolution due to our max size limit
+  // Check if we need to limit to a smaller resolution due to our max size limit
   float scale = getScale();
 
-  if( (res_width*view_width*scale > max_size) || (res_height*view_height*scale > max_size) ){
+  if( (max_size > 0) &&
+      ( (res_width*view_width*scale > (unsigned int) max_size) ||
+	(res_height*view_height*scale > (unsigned int) max_size) ) ){
     int dimension;
-    if( (res_width*view_width/max_size) > (res_height*view_width/max_size) ){
+    if( (res_width*view_width/max_size) > (res_height*view_height/max_size) ){
       dimension = (int) (res_width*view_width*scale);
     }
     else{
@@ -86,7 +90,7 @@ unsigned int View::getResolution(){
     }
 
     i = 1;
-    while( (dimension / i) > max_size ){
+    while( resolution > 0 && ( (dimension / i) > (unsigned int) max_size ) ){
       dimension /= 2;
       res_width = (int) floor(width / 2.0);
       res_height = (int) floor(height / 2.0 );
@@ -229,8 +233,8 @@ unsigned int View::getRequestWidth(){
     else if( requested_height==0 ) w = width;
   }
 
-  // Limit our requested width to the maximum export size
-  if( w > max_size ) w = max_size;
+  // Limit our requested width to the maximum export size if we have set a limit
+  if( max_size > 0 && w > (unsigned int) max_size ) w = max_size;
 
   return w;
 }
@@ -251,7 +255,7 @@ unsigned int View::getRequestHeight(){
   }
 
   // Limit our requested height to the maximum export size
-  if( h > max_size ) h = max_size;
+  if( max_size > 0 && h > (unsigned int) max_size ) h = max_size;
 
   return h;
 }

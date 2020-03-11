@@ -1,7 +1,7 @@
 /*
     IIP FCGI server module - Main loop.
 
-    Copyright (C) 2000-2019 Ruven Pillay
+    Copyright (C) 2000-2020 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -287,6 +287,10 @@ int main( int argc, char *argv[] )
   string filesystem_prefix = Environment::getFileSystemPrefix();
 
 
+  // Get the filesystem suffix if any
+  string filesystem_suffix = Environment::getFileSystemSuffix();
+
+
   // Set up our watermark object
   Watermark watermark( Environment::getWatermark(),
 		       Environment::getWatermarkOpacity(),
@@ -318,6 +322,10 @@ int main( int argc, char *argv[] )
   bool embed_icc = Environment::getEmbedICC();
 
 
+  // Set our IIIF version
+  unsigned int iiif_version = Environment::getIIIFVersion();
+
+
   // Create our image processing engine
   Transform* processor = new Transform();
 
@@ -332,10 +340,12 @@ int main( int argc, char *argv[] )
   if( loglevel >= 1 ){
     logfile << "Setting maximum image cache size to " << max_image_cache_size << "MB" << endl;
     logfile << "Setting filesystem prefix to '" << filesystem_prefix << "'" << endl;
+    logfile << "Setting filesystem suffix to '" << filesystem_suffix << "'" << endl;
     logfile << "Setting default JPEG quality to " << jpeg_quality << endl;
     logfile << "Setting maximum CVT size to " << max_CVT << endl;
     logfile << "Setting HTTP Cache-Control header to '" << cache_control << "'" << endl;
     logfile << "Setting 3D file sequence name pattern to '" << filename_pattern << "'" << endl;
+    logfile << "Setting IIIF version to " << iiif_version << endl;
     if( !cors.empty() ) logfile << "Setting Cross Origin Resource Sharing to '" << cors << "'" << endl;
     if( !base_url.empty() ) logfile << "Setting base URL to '" << base_url << "'" << endl;
     if( max_layers != 0 ){
@@ -551,7 +561,7 @@ int main( int argc, char *argv[] )
 
     // View object for use with the CVT command etc
     View view;
-    if( max_CVT != -1 ) view.setMaxSize( max_CVT );
+    if( max_CVT != 0 ) view.setMaxSize( max_CVT );
     if( max_layers != 0 ) view.setMaxLayers( max_layers );
     view.setAllowUpscaling( allow_upscaling );
     view.setEmbedICC( embed_icc );
@@ -580,6 +590,7 @@ int main( int argc, char *argv[] )
       session.watermark = &watermark;
       session.headers.clear();
       session.processor = processor;
+      session.codecOptions["IIIF_VERSION"] = iiif_version;
 #ifdef HAVE_KAKADU
       session.codecOptions["KAKADU_READMODE"] = kdu_readmode;
 #endif
@@ -627,8 +638,9 @@ int main( int argc, char *argv[] )
 
 
 
-      // Check that we actually have a request string
+      // Check that we actually have a request string. If not, just show server home page
       if( request_string.empty() ){
+        response.setStatus( "200 OK" );
 	throw string( "QUERY_STRING not set" );
       }
 
@@ -654,6 +666,9 @@ int main( int argc, char *argv[] )
       }
       if( (header = FCGX_GetParam("HTTPS", request.envp)) ) {
         session.headers["HTTPS"] = string(header);
+      }
+      if( (header = FCGX_GetParam("HTTP_ACCEPT", request.envp)) ){
+	session.headers["HTTP_ACCEPT"] = string(header);
       }
       if( (header = FCGX_GetParam("HTTP_X_IIIF_ID", request.envp)) ){
         session.headers["HTTP_X_IIIF_ID"] = string(header);
@@ -765,7 +780,7 @@ int main( int argc, char *argv[] )
       ////////////////////////////////////////////////////////
 
 #ifdef HAVE_MEMCACHED
-      if( memcached.connected() ){
+      if( response.cachable() && memcached.connected() ){
 	Timer memcached_timer;
 	memcached_timer.start();
 	memcached.store( session.headers["QUERY_STRING"], writer.buffer, writer.sz );
@@ -864,6 +879,21 @@ int main( int argc, char *argv[] )
       if( loglevel >= 2 ){
 	logfile << error.what() << endl;
 	logfile << "Sending HTTP 400 Bad Request" << endl;
+      }
+    }
+
+    // Memory allocation errors through std::bad_alloc
+    catch( const bad_alloc& error ){
+      string message = "Unable to allocate memory";
+      string status = "Status: 500 Internal Server Error\r\nServer: iipsrv/" + version +
+	"\r\nContent-Type: text/plain; charset=utf-8" +
+	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
+	"\r\n\r\n" + message;
+      writer.printf( status.c_str() );
+      writer.flush();
+      if( loglevel >= 1 ){
+	logfile << "Error: " << message << endl;
+	logfile << "Sending HTTP 500 Internal Server Error" << endl;
       }
     }
 

@@ -2,7 +2,7 @@
 
     IIIF Request Command Handler Class Member Function
 
-    Copyright (C) 2014-2019 Ruven Pillay
+    Copyright (C) 2014-2020 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,7 +22,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <sstream>
 #include "Task.h"
 #include "Tokenizer.h"
 #include "Transforms.h"
@@ -31,9 +30,17 @@
 
 // Define several IIIF strings
 #define IIIF_SYNTAX "IIIF syntax is {identifier}/{region}/{size}/{rotation}/{quality}{.format}"
-#define IIIF_PROFILE "http://iiif.io/api/image/2/level1.json"
-#define IIIF_CONTEXT "http://iiif.io/api/image/2/context.json"
+
+// The canonical IIIF protocol URI
 #define IIIF_PROTOCOL "http://iiif.io/api/image"
+
+// The context is the protocol plus API version
+#define IIIF_CONTEXT IIIF_PROTOCOL "/%d/context.json"
+
+// IIIF compliance level
+#define IIIF_PROFILE "level1"
+
+
 
 using namespace std;
 
@@ -96,11 +103,12 @@ void IIIF::run( Session* session, const string& src )
     else{
       string request_uri = session->headers["REQUEST_URI"];
       request_uri.erase( request_uri.length() - suffix.length(), string::npos );
-      id = "http://" + session->headers["HTTP_HOST"] + request_uri;
+      id = "//" + session->headers["HTTP_HOST"] + request_uri;
     }
     string header = string( "Status: 303 See Other\r\n" )
                     + "Location: " + id + "/info.json\r\n"
                     + "Server: iipsrv/" + VERSION + "\r\n"
+                    + "X-Powered-By: IIPImage\r\n"
                     + "\r\n";
     session->out->printf( (const char*) header.c_str() );
     session->response->setImageSent();
@@ -129,6 +137,27 @@ void IIIF::run( Session* session, const string& src )
   session->view->setImageSize( width, height );
   session->view->setMaxResolutions( numResolutions );
 
+  // Set a default IIIF version
+  int iiif_version = session->codecOptions["IIIF_VERSION"];
+
+  // Check whether the client has requested a specific IIIF version within the HTTP Accept header
+  //  - first look for the protocol prefix
+  size_t pos = session->headers["HTTP_ACCEPT"].find( IIIF_PROTOCOL );
+  if( pos != string::npos ){
+    // The Accept header should contain a versioned context string of the form http://iiif.io/api/image/3/context.json
+    string profile = session->headers["HTTP_ACCEPT"].substr( pos, string(IIIF_PROTOCOL).size()+15 );
+    // Make sure the string is correctly terminated
+    if( profile.substr( string(IIIF_PROTOCOL).size()+2 ) == "/context.json" ){
+      int v;
+      if( sscanf( profile.c_str(), IIIF_CONTEXT, &v ) == 1 ){
+        // Set cache control to private if user request is not for the default version
+        if( v != (int)iiif_version ) session->response->setCacheControl( "private" );
+        iiif_version = v;
+        if ( session->loglevel >= 2 ) *(session->logfile) << "IIIF :: User request for IIIF version " << iiif_version << endl;
+      }
+    }
+  }
+
   // PARSE INPUT PARAMETERS
 
   // info.json
@@ -147,8 +176,8 @@ void IIIF::run( Session* session, const string& src )
       id = host + query;
     }
     else{
-      string request_uri = session->headers["REQUEST_URI"];
 
+      string request_uri = session->headers["REQUEST_URI"];
       string scheme = session->headers["HTTPS"].empty() ? "http://" : "https://";
 
       if (request_uri.empty()){
@@ -168,9 +197,13 @@ void IIIF::run( Session* session, const string& src )
       *(session->logfile) << "IIIF :: ID is set to " << iiif_id << endl;
     }
 
+    // Set the context URL string
+    char iiif_context[48];
+    snprintf( iiif_context, 48, IIIF_CONTEXT, iiif_version );
+
+
     infoStringStream << "{" << endl
-                     << "  \"@context\" : \"" << IIIF_CONTEXT << "\"," << endl
-                     << "  \"@id\" : \"" << iiif_id << "\"," << endl
+                     << "  \"@context\" : \"" << iiif_context << "\"," << endl
                      << "  \"protocol\" : \"" << IIIF_PROTOCOL << "\"," << endl
                      << "  \"width\" : " << width << "," << endl
                      << "  \"height\" : " << height << "," << endl
@@ -202,38 +235,51 @@ void IIIF::run( Session* session, const string& src )
     }
 
     infoStringStream << " ] }" << endl
-                     << "  ]," << endl
-                     << "  \"profile\" : [" << endl
-                     << "     \"" << IIIF_PROFILE << "\"," << endl
-                     << "     { \"formats\" : [ \"jpg\" ]," << endl
-                     << "       \"qualities\" : [ \"native\",\"color\",\"gray\",\"bitonal\" ]," << endl
-                     << "       \"supports\" : [\"regionByPct\",\"regionSquare\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"rotationBy90s\",\"mirroring\"]," << endl
-		     << "       \"maxWidth\" : " << max << "," << endl
-		     << "       \"maxHeight\" : " << max << "\n     }" << endl
-                     << "  ]" << endl
-                     << "}";
+                     << "  ]," << endl;
 
-    // Get our Access-Control-Allow-Origin value, if any
-    string cors = session->response->getCORS();
-    string eof = "\r\n";
 
-    // Now output the info text
+    // Profile for IIIF version 3 and above
+    if( iiif_version >= 3 ){
+      infoStringStream << "  \"id\" : \"" << iiif_id << "\"," << endl
+		       << "  \"type\": \"ImageService3\"," << endl
+		       << "  \"profile\" : \"" << IIIF_PROFILE << "\"," << endl
+		       << "  \"maxWidth\" : " << max << "," << endl
+		       << "  \"maxHeight\" : " << max << "," << endl
+		       << "  \"extraQualities\": [\"color\",\"gray\",\"bitonal\"]," << endl
+		       << "  \"extraFeatures\": [\"regionByPct\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"sizeUpscaling\",\"rotationBy90s\",\"mirroring\"]" << endl
+		       << "}";
+    }
+    // Profile for IIIF versions 1 and 2
+    else {
+      infoStringStream << "  \"@id\" : \"" << iiif_id << "\"," << endl
+		       << "  \"profile\" : [" << endl
+		       << "     \"" << IIIF_PROTOCOL << "/" << iiif_version << "/" << IIIF_PROFILE << "\"," << endl
+		       << "     { \"formats\" : [ \"jpg\" ]," << endl
+		       << "       \"qualities\" : [\"native\",\"color\",\"gray\",\"bitonal\"]," << endl
+		       << "       \"supports\" : [\"regionByPct\",\"regionSquare\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"sizeUpscaling\",\"rotationBy90s\",\"mirroring\"]," << endl
+		       << "       \"maxWidth\" : " << max << "," << endl
+		       << "       \"maxHeight\" : " << max << "\n     }" << endl
+		       << "  ]" << endl
+		       << "}";
+    }
+
+
+    // Now output the HTTP header and info text
     stringstream header;
-    header << "Server: iipsrv/" << VERSION << eof
-           << "Content-Type: application/ld+json" << eof
-           << "Last-Modified: " << (*session->image)->getTimestamp() << eof
-           << session->response->getCacheControl() << eof;
-
-    if ( !cors.empty() ) header << cors << eof;
-    header << eof << infoStringStream.str();
+    header << session->response->createHTTPHeader( "json+ld", (*session->image)->getTimestamp() )
+	   << infoStringStream.str();
 
     session->out->printf( (const char*) header.str().c_str() );
     session->response->setImageSent();
 
+    // Because of our ability to serve different versions and because of possible content-negotiation
+    // do not cache any info.json files via Memcached
+    session->response->setCachability( false );
+
     return;
 
   }
-  // Parse image request - any other than info requests are considered image requests
+  // Parse image request - anything other than info requests are considered image requests
   else{
 
     // IIIF requests are / separated with no CGI style '&' separators
@@ -340,6 +386,12 @@ void IIIF::run( Session* session, const string& src )
       float ratio = (float)requested_width / (float)requested_height;
       unsigned int max_size = session->view->getMaxSize();
 
+      // ^ request prefix (upscaling) - remove ^ symbol and continue usual parsing
+      if( iiif_version >= 3 ){
+	if ( sizeString.substr(0, 1) == "^" ) sizeString.erase(0, 1);
+	else session->view->allow_upscaling = false;
+      }
+
       // "full" or "max" request
       if ( sizeString == "full" || sizeString == "max" ){
         // No need to do anything
@@ -359,10 +411,11 @@ void IIIF::run( Session* session, const string& src )
       // "w,h", "w,", ",h", "!w,h" requests
       else{
 
-        // !w,h request - remove !, remember it and continue as if w,h request
+        // !w,h request (do not break aspect ratio) - remove the !, store the info and continue usual parsing
         if ( sizeString.substr(0, 1) == "!" ) sizeString.erase(0, 1);
         // Otherwise tell our view to break aspect ratio
         else session->view->maintain_aspect = false;
+
 
         size_t pos = sizeString.find_first_of(",");
 
@@ -403,6 +456,14 @@ void IIIF::run( Session* session, const string& src )
 
       if ( requested_width == 0 || requested_height == 0 ){
         throw invalid_argument( "IIIF: invalid size" );
+      }
+
+      // Check for malformed upscaling request
+      if( iiif_version >= 3 ){
+	if( session->view->allow_upscaling == false &&
+	    ( requested_width > width || requested_height > height ) ){
+	  throw invalid_argument( "IIIF: upscaling should be prefixed with ^" );
+	}
       }
 
       // Limit our requested size to the maximum allowable size if necessary

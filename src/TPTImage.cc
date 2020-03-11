@@ -2,7 +2,7 @@
 
 /*  IIP Server: Tiled Pyramidal TIFF handler
 
-    Copyright (C) 2000-2019 Ruven Pillay.
+    Copyright (C) 2000-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@ void TPTImage::openImage()
 
   // Insist that the tiff and tile_buf be NULL
   if( tiff || tile_buf ){
-    throw file_error( "TPT::openImage: tiff or tile_buf is not NULL" );
+    throw file_error( "TPTImage :: tiff or tile_buf is not NULL" );
   }
 
   string filename = getFileName( currentX, currentY );
@@ -43,7 +43,7 @@ void TPTImage::openImage()
 
   // Try to open and allocate a buffer
   if( ( tiff = TIFFOpen( filename.c_str(), "rm" ) ) == NULL ){
-    throw file_error( "tiff open failed for: " + filename );
+    throw file_error( "TPTImage :: TIFFOpen() failed for: " + filename );
   }
 
   // Load our metadata if not already loaded
@@ -51,7 +51,7 @@ void TPTImage::openImage()
 
   // Insist on a tiled image
   if( (tile_width == 0) && (tile_height == 0) ){
-    throw file_error( "TIFF image is not tiled" );
+    throw file_error( "TPTImage :: Image is not tiled" );
   }
 
   isSet = true;
@@ -82,6 +82,12 @@ void TPTImage::loadImageInfo( int seq, int ang )
   TIFFGetField( tiff, TIFFTAG_BITSPERSAMPLE, &bitspersample );
   TIFFGetField( tiff, TIFFTAG_PHOTOMETRIC, &colour );
   TIFFGetField( tiff, TIFFTAG_SAMPLEFORMAT, &sampleformat );
+  TIFFGetField( tiff, TIFFTAG_XRESOLUTION, &dpi_x );
+  TIFFGetField( tiff, TIFFTAG_YRESOLUTION, &dpi_y );
+  TIFFGetField( tiff, TIFFTAG_RESOLUTIONUNIT, &dpi_units );
+
+  // Units for libtiff are 1=unknown, 2=DPI and 3=pixels/cm, whereas we want 0=unknown, 1=DPI and 2=pixels/cm
+  dpi_units--;
 
   // We have to do this conversion explicitly to avoid problems on Mac OS X
   channels = (unsigned int) samplesperpixel;
@@ -216,7 +222,7 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   if( !tiff ){
     filename = getFileName( seq, ang );
     if( ( tiff = TIFFOpen( filename.c_str(), "rm" ) ) == NULL ){
-      throw file_error( "tiff open failed for:" + filename );
+      throw file_error( "TPTImage :: TIFFOpen() failed for:" + filename );
     }
   }
 
@@ -235,14 +241,14 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
 
   // Change to the right directory for the resolution
   if( !TIFFSetDirectory( tiff, vipsres ) ) {
-    throw file_error( "TIFFSetDirectory failed" );
+    throw file_error( "TPTImage :: TIFFSetDirectory() failed" );
   }
 
 
   // Check that a valid tile number was given
   if( tile >= TIFFNumberOfTiles( tiff ) ) {
     ostringstream tile_no;
-    tile_no << "Asked for non-existent tile: " << tile;
+    tile_no << "TPTImage :: Asked for non-existent tile: " << tile;
     throw file_error( tile_no.str() );
   }
 
@@ -262,7 +268,7 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
 
   // Make sure this resolution is tiled
   if( (tw == 0) || (th == 0) ){
-    throw file_error( "Requested resolution is not tiled" );
+    throw file_error( "TPTImage :: Requested resolution is not tiled" );
   }
 
 
@@ -314,7 +320,7 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   // Allocate memory for our tile.
   if( !tile_buf ){
     if( ( tile_buf = _TIFFmalloc( TIFFTileSize(tiff) ) ) == NULL ){
-      throw file_error( "tiff malloc tile failed" );
+      throw file_error( "TPTImage :: TIFFmalloc() failed" );
     }
   }
 
@@ -322,7 +328,7 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   int length = TIFFReadEncodedTile( tiff, (ttile_t) tile,
 				    tile_buf, (tsize_t) - 1 );
   if( length == -1 ) {
-    throw file_error( "TIFFReadEncodedTile failed for " + getFileName( seq, ang ) );
+    throw file_error( "TPTImage :: TIFFReadEncodedTile() failed for " + getFileName( seq, ang ) );
   }
 
 

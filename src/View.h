@@ -1,7 +1,7 @@
 /*
     Image View and Transform Parameters
 
-    Copyright (C) 2003-2019 Ruven Pillay.
+    Copyright (C) 2003-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -41,18 +41,18 @@ class View{
   // Resolution independent x,y,w,h region viewport
   float view_left, view_top, view_width, view_height; /// viewport
 
-  int resolution;                             /// Requested resolution
+  int resolution;                             /// Requested resolution where 0 is smallest available
   unsigned int max_resolutions;               /// Total available resolutions
   unsigned int width, height;                 /// Image width and height at full resolution
   unsigned int res_width, res_height;         /// Width and height at requested resolution
   unsigned int min_size;                      /// Minimum viewport dimension
-  unsigned int max_size;                      /// Maximum viewport dimension
+  int max_size;                               /// Maximum viewport dimension
   unsigned int requested_width;               /// Width requested by WID command
   unsigned int requested_height;              /// Height requested by HEI command
   float rotation;                             /// Rotation requested by ROT command
 
 
-  /// Internal function to calculate the resolution associated with a width
+  /// Internal function to calculate the optimal resolution associated with a width
   ///  or height request. This also takes into account maximum & minimum size limits.
   /** @param m maximum size
       @param r requested size
@@ -108,12 +108,12 @@ class View{
 
   /// Set the maximum view port dimension
   /** @param m maximum viewport dimension */
-  void setMaxSize( unsigned int m ){ max_size = m; };
+  void setMaxSize( int m ){ max_size = m; };
 
 
   /// Get the maximum allowed output size
   /* @return maximum output dimension */
-  unsigned int getMaxSize(){ return max_size; };
+  int getMaxSize(){ return max_size; };
   
 
   /// Set the allow_upscaling flag
@@ -171,7 +171,7 @@ class View{
   };
 
 
-  /// Return the requested resolution
+  /// Return the resolution level needed for the requested view
   /* @return requested resolution level */
   unsigned int getResolution();
 

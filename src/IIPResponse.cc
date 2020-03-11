@@ -1,7 +1,7 @@
 /*
     IIP Response Handler Class
 
-    Copyright (C) 2003-2015 Ruven Pillay.
+    Copyright (C) 2003-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -37,7 +37,8 @@ IIPResponse::IIPResponse(){
   mimeType = "Content-Type: application/vnd.netfpx";
   cors = "";
   eof = "\r\n";
-  sent = false;
+  _sent = false;
+  _cachable = true;
 }
 
 
@@ -77,7 +78,7 @@ void IIPResponse::addResponse( string arg, const string& s ){
 
 void IIPResponse::addResponse( const char* c, int a, int b ){
 
-  char tmp[64]; 
+  char tmp[64];
   snprintf( tmp, 64, "%s:%d %d", c, a, b );
   responseBody.append( tmp );
   responseBody.append( eof );
@@ -92,7 +93,7 @@ void IIPResponse::setError( const string& code, const string& arg ){
 }
 
 
-string IIPResponse::formatResponse() {
+string IIPResponse::formatResponse(){
 
   /* We always need 2 sets of eof after the headers before body/response
    */
@@ -100,7 +101,7 @@ string IIPResponse::formatResponse() {
   if( error.length() ){
     response = server + eof + "Cache-Control: no-cache" + eof + mimeType + eof;
     if( !cors.empty() ) response += cors + eof;
-    response += "Status: 400 Bad Request" + eof +
+    response += status + eof +
       "Content-Disposition: inline;filename=\"IIPisAMadGameClosedToOurUnderstanding.netfpx\"" +
       eof + eof + error;
   }
@@ -118,7 +119,7 @@ string IIPResponse::formatResponse() {
 string IIPResponse::getAdvert(){
 
   string advert = server + eof + "Content-Type: text/html" + eof;
-  advert += "Status: 400 Bad Request" + eof;
+  advert += status + eof;
   advert += "Content-Disposition: inline;filename=\"iipsrv.html\"" + eof + eof;
   advert += "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>IIPImage Server</title><meta name=\"DC.creator\" content=\"Ruven Pillay &lt;ruven@users.sourceforge.net&gt;\"/><meta name=\"DC.title\" content=\"IIPImage Server\"/><meta name=\"DC.source\" content=\"https://iipimage.sourceforge.io\"/></head><body style=\"font-family:Helvetica,sans-serif; margin:4em\"><center><h1>IIPImage Server</h1><h2>Version "
     + string( VERSION ) +
@@ -126,4 +127,23 @@ string IIPResponse::getAdvert(){
 
   return advert;
 
+}
+
+
+string IIPResponse::createHTTPHeader( string mimeType, string timeStamp ){
+
+  stringstream header;
+  header << "Server: iipsrv/" << VERSION << eof
+         << "X-Powered-By: IIPImage" << eof
+         << "Content-Type: application/" << mimeType << eof
+         << "Last-Modified: " << timeStamp << eof
+	 << cacheControl << eof;
+
+  // Add CORS header if we have one
+  if ( !cors.empty() ) header << cors << eof;
+
+  // Need extra EOF separator
+  header << eof;
+
+  return header.str();
 }

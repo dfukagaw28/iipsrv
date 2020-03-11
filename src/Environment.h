@@ -1,7 +1,7 @@
 /*
     IIP Environment Variable Class
 
-    Copyright (C) 2006-2018 Ruven Pillay.
+    Copyright (C) 2006-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 #define MAX_CVT 5000
 #define MAX_LAYERS 0
 #define FILESYSTEM_PREFIX ""
+#define FILESYSTEM_SUFFIX ""
 #define WATERMARK ""
 #define WATERMARK_PROBABILITY 1.0
 #define WATERMARK_OPACITY 1.0
@@ -45,6 +46,7 @@
 #define URI_MAP ""
 #define EMBED_ICC true
 #define KAKADU_READMODE 0
+#define IIIF_VERSION 2
 
 
 #include <string>
@@ -116,7 +118,10 @@ class Environment {
     int max_CVT;
     if( envpara ){
       max_CVT = atoi( envpara );
-      if( max_CVT < 64 ) max_CVT = 64;
+      // -1 indicates no maximum. Otherwise minimum is 1
+      if( max_CVT < -1 ) max_CVT = 1;
+      // If zero, use default
+      else if( max_CVT == 0 ) max_CVT = MAX_CVT;
     }
     else max_CVT = MAX_CVT;
 
@@ -143,6 +148,18 @@ class Environment {
     else filesystem_prefix = FILESYSTEM_PREFIX;
 
     return filesystem_prefix;
+  }
+
+
+  static std::string getFileSystemSuffix(){
+    char* envpara = getenv( "FILESYSTEM_SUFFIX" );
+    std::string filesystem_suffix;
+    if( envpara ){
+      filesystem_suffix = std::string( envpara );
+    }
+    else filesystem_suffix = FILESYSTEM_SUFFIX;
+
+    return filesystem_suffix;
   }
 
 
@@ -282,6 +299,19 @@ class Environment {
     else readmode = KAKADU_READMODE;
     return readmode;
   }
+
+
+  static unsigned int getIIIFVersion(){
+    unsigned int version;
+    char* envpara = getenv( "IIIF_VERSION" );
+    if( envpara ){
+      version = atoi( envpara );
+      if( version < 1 ) version = IIIF_VERSION;
+    }
+    else version = IIIF_VERSION;
+    return version;
+  }
+
 
 };
 

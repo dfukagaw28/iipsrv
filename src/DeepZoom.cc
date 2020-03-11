@@ -7,7 +7,7 @@
     Culture of the Czech Republic.
 
 
-    Copyright (C) 2009-2018 Ruven Pillay.
+    Copyright (C) 2009-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -105,21 +105,16 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 			  << ", image height: " << height << endl;
     }
 
-    char str[1024];
-    snprintf( str, 1024,
-	      "Server: iipsrv/%s\r\n"
-	      "Content-Type: application/xml\r\n"
-	      "Last-Modified: %s\r\n"
-	      "%s\r\n"
-	      "\r\n"
-	      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
-	      "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\"\r\n"
-	      "TileSize=\"%d\" Overlap=\"0\" Format=\"jpg\">"
-	      "<Size Width=\"%d\" Height=\"%d\"/>"
-	      "</Image>",
-	      VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str(), tw, width, height );
 
-    session->out->printf( (const char*) str );
+    // Format our output
+    stringstream header;
+    header << session->response->createHTTPHeader( "xml", (*session->image)->getTimestamp() )
+	   << "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\" "
+	   << "TileSize=\"" << tw << "\" Overlap=\"0\" Format=\"jpg\">"
+	   << "<Size Width=\"" << width << "\" Height=\"" << height << "\"/>"
+	   << "</Image>";
+
+    session->out->printf( (const char*) header.str().c_str() );
     session->response->setImageSent();
 
     return;
@@ -128,7 +123,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
   // Get the tile coordinates. DeepZoom requests are of the form $image_files/r/x_y.jpg
   // where r is the resolution number and x and y are the tile coordinates
-  
+
   int resolution, x, y;
   unsigned int n, n1, n2;
 

@@ -1,7 +1,7 @@
 /*
     IIP Response Handler Class
 
-    Copyright (C) 2003-2018 Ruven Pillay.
+    Copyright (C) 2003-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@
 
 
 #include <string>
+#include <sstream>
 
 
 /// Class to handle non-image IIP responses including errors
@@ -52,7 +53,9 @@ class IIPResponse{
   std::string responseBody;        // The main response
   std::string error;               // Error message
   std::string cors;                // CORS (Cross-Origin Resource Sharing) setting
-  bool sent;                       // Indicate whether a response has been sent
+  std::string status;              // HTTP status code
+  bool _cachable;                  // Indicate whether response should be cached
+  bool _sent;                      // Indicate whether a response has been sent
 
 
  public:
@@ -73,7 +76,7 @@ class IIPResponse{
 
   /// Add a response string
   /** @param r response string */
-  void addResponse( const std::string& r ); 
+  void addResponse( const std::string& r );
 
 
   /// Add a response string
@@ -129,8 +132,23 @@ class IIPResponse{
   void setCacheControl( const std::string& c ){ cacheControl = "Cache-Control: " + c; };
 
 
+  /// Set whether the response should be cached
+  /** @param cachable Whether this reponse should be cached or not */
+  void setCachability( bool cachable ){ _cachable = cachable; };
+
+
+  /// Is response cachable?
+  /** @return Whether response should be cached */
+  bool cachable(){ return _cachable; };
+
+
   /// Get Cache-Control value
   std::string getCacheControl(){ return cacheControl; };
+
+
+  /// Set HTTP status code
+  /** @param s HTTP status code string */
+  void setStatus( const std::string& s ){ status = "Status: " + s; }
 
 
   /// Get a formatted string to send back
@@ -152,17 +170,23 @@ class IIPResponse{
 
 
   /// Set the sent flag indicating that some sort of response has been sent
-  void setImageSent() { sent = true; };
+  void setImageSent() { _sent = true; };
 
 
   /// Indicate whether a response has been sent
-  bool imageSent() { return sent; };
+  bool imageSent() { return _sent; };
 
 
   /// Display our advertising banner ;-)
   /** @return HTML string */
   std::string getAdvert();
 
+
+  /// Convenience function to generate HTTP header fields
+  /** @param mimeType MIME type of output
+      @param timeStamp formatted timestamp
+    */
+  std::string createHTTPHeader( std::string mimeType, std::string timeStamp );
 
 };
 

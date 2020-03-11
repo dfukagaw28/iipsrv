@@ -1,7 +1,7 @@
 /*
     IIP Profile Command Handler Class Member Function
 
-    Copyright (C) 2013-2017 Ruven Pillay.
+    Copyright (C) 2013-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
 
 #include "Task.h"
 #include <cmath>
-#include <sstream>
 #include <iomanip>
 
 using namespace std;
@@ -74,9 +73,9 @@ void PFL::run( Session* session, const std::string& argument ){
   }
 
 
-  if( session->loglevel >= 5 ){ 
+  if( session->loglevel >= 5 ){
     (*session->logfile) << "PFL :: Resolution: " << resolution
-			<< ", Position: " << x1 << "," << y1 << " - " 
+			<< ", Position: " << x1 << "," << y1 << " - "
 			<< x2 << "," << y2 << endl;
   }
 
@@ -84,7 +83,7 @@ void PFL::run( Session* session, const std::string& argument ){
   // Make sure we don't request impossible resolutions
   if( resolution<0 || resolution>=(int)(*session->image)->getNumResolutions() ){
     ostringstream error;
-    error << "PFL :: Invalid resolution number: " << resolution; 
+    error << "PFL :: Invalid resolution number: " << resolution;
     throw error.str();
   }
 
@@ -192,19 +191,14 @@ void PFL::run( Session* session, const std::string& argument ){
   profile << "}";
 
 
-  // Send out our JSON header
 #ifndef DEBUG
-  char str[1024];
-  snprintf( str, 1024,
-	    "Server: iipsrv/%s\r\n"
-	    "Content-Type: application/json\r\n"
-	    "Last-Modified: %s\r\n"
-	    "%s\r\n"
-	    "\r\n",
-	    VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
-  session->out->printf( (const char*) str );
+  // Send out our JSON header
+  stringstream header;
+  header << session->response->createHTTPHeader( "json", (*session->image)->getTimestamp() );
+  session->out->printf( (const char*) header.str().c_str() );
   session->out->flush();
+
 #endif
 
   // Send the data itself

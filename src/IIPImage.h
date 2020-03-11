@@ -2,7 +2,7 @@
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2019 Ruven Pillay.
+    Copyright (C) 2000-2020 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -69,6 +69,9 @@ class IIPImage {
   /// Prefix to add to paths
   std::string fileSystemPrefix;
 
+  /// Suffix to add to paths
+  std::string fileSystemSuffix;
+
   /// Pattern for sequences
   std::string fileNamePattern;
 
@@ -117,6 +120,13 @@ class IIPImage {
   /// The colour space of the image
   ColourSpaces colourspace;
 
+  /// Native physical resolution in both X and Y
+  float dpi_x, dpi_y;
+
+  /// Units for native physical resolution
+  /** 0=unknown, 1=pixels/inch, 2=pixels/cm */
+  int dpi_units;
+
   /// The number of available resolutions in this image
   unsigned int numResolutions;
 
@@ -161,6 +171,9 @@ class IIPImage {
     tile_width( 0 ),
     tile_height( 0 ),
     colourspace( NONE ),
+    dpi_x( 0 ),
+    dpi_y( 0 ),
+    dpi_units( 0 ),
     numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
@@ -182,6 +195,9 @@ class IIPImage {
     tile_width( 0 ),
     tile_height( 0 ),
     colourspace( NONE ),
+    dpi_x( 0 ),
+    dpi_y( 0 ),
+    dpi_units( 0 ),
     numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
@@ -198,6 +214,7 @@ class IIPImage {
   IIPImage( const IIPImage& image )
    : imagePath( image.imagePath ),
     fileSystemPrefix( image.fileSystemPrefix ),
+    fileSystemSuffix( image.fileSystemSuffix ),
     fileNamePattern( image.fileNamePattern ),
     isFile( image.isFile ),
     suffix( image.suffix ),
@@ -211,6 +228,9 @@ class IIPImage {
     tile_width( image.tile_width ),
     tile_height( image.tile_height ),
     colourspace( image.colourspace ),
+    dpi_x( image.dpi_x ),
+    dpi_y( image.dpi_y ),
+    dpi_units( image.dpi_units ),
     numResolutions( image.numResolutions ),
     bpc( image.bpc ),
     channels( image.channels ),
@@ -269,6 +289,9 @@ class IIPImage {
 
   /// Set a file system prefix for added security
   void setFileSystemPrefix( const std::string& prefix ) { fileSystemPrefix = prefix; };
+
+  /// Set a file system suffix
+  void setFileSystemSuffix( const std::string& suffix ) { fileSystemSuffix = suffix; };
 
   /// Set the file name pattern used in image sequences
   void setFileNamePattern( const std::string& pattern ) { fileNamePattern = pattern; };
