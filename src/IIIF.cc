@@ -126,8 +126,8 @@ void IIIF::run( Session* session, const string& src )
   filename = (*session->image)->getImagePath();
 
   // Get the information about image, that can be shown in info.json
-  unsigned int requested_width;
-  unsigned int requested_height;
+  int requested_width;
+  int requested_height;
   unsigned int width = (*session->image)->getImageWidth();
   unsigned int height = (*session->image)->getImageHeight();
   unsigned tw = (*session->image)->getTileWidth();
@@ -454,7 +454,7 @@ void IIIF::run( Session* session, const string& src )
       }
 
 
-      if ( requested_width == 0 || requested_height == 0 ){
+      if ( requested_width <= 0 || requested_height <= 0 ){
         throw invalid_argument( "IIIF: invalid size" );
       }
 
@@ -531,7 +531,13 @@ void IIIF::run( Session* session, const string& src )
       string quality = izer.nextToken();
       transform( quality.begin(), quality.end(), quality.begin(), ::tolower );
 
-      size_t pos = quality.find_last_of(".");
+      // Strip off any query suffixes that use the ? character
+      // For example versioning such as ../default.jpg?t=23421232
+      size_t pos = quality.find_first_of("?");
+      if ( pos != string::npos ) quality = quality.substr( 0, pos );
+
+      // Check for a format specifier
+      pos = quality.find_last_of(".");
 
       // Format - if dot is not present, we use default and currently only supported format - JPEG
       if ( pos != string::npos ){
