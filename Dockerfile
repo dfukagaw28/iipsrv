@@ -35,6 +35,7 @@ WORKDIR /usr/local/src/iipsrv
 COPY . .
 
 RUN set -ex \
+    && ./autogen.sh \
     && ./configure \
         --with-jpeg-includes=/usr/include \
         --with-jpeg-libraries=/usr/lib/x86_64-linux-gnu \
