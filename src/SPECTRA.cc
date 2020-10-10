@@ -1,11 +1,11 @@
 /*
     IIP SPECTRA Command Handler Class Member Function
 
-    Copyright (C) 2009 Ruven Pillay.
+    Copyright (C) 2009-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
+    the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -14,8 +14,8 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 #include "Task.h"
@@ -35,7 +35,6 @@ void SPECTRA::run( Session* session, const std::string& argument ){
   */
 
   if( session->loglevel >= 3 ) (*session->logfile) << "SPECTRA handler reached" << endl;
-  session = session;
 
   int resolution, tile, x, y;
 
@@ -84,10 +83,10 @@ void SPECTRA::run( Session* session, const std::string& argument ){
   snprintf( str, 1024,
 	    "Server: iipsrv/%s\r\n"
 	    "Content-Type: application/xml\r\n"
-	    "Cache-Control: max-age=%d\r\n"
 	    "Last-Modified: %s\r\n"
+	    "%s\r\n"
 	    "\r\n",
-	    VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str() );
+	    VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
   session->out->printf( (const char*) str );
   session->out->flush();
@@ -101,25 +100,34 @@ void SPECTRA::run( Session* session, const std::string& argument ){
 
     int n = *i;
 
-    RawTile rawtile = tilemanager.getTile( resolution, tile, n, session->view->yangle, session->view->layers, UNCOMPRESSED );
+    RawTile rawtile = tilemanager.getTile( resolution, tile, n, session->view->yangle, session->view->getLayers(), UNCOMPRESSED );
 
     unsigned int tw = (*session->image)->getTileWidth();
     unsigned int index = y*tw + x;
 
-    unsigned short *usptr;
-    unsigned char *ucptr;
-    float reflectance;
+    void *ptr;
+    float reflectance = 0.0;
 
     if( session->loglevel >= 5 ) (*session->logfile) << "SPECTRA :: " << rawtile.bpc << " bits per channel data" << endl;
 
-    // Handle depending on bit depth and normalize to 0.0->1.0
-    if( rawtile.bpc == 16 ){
-      usptr = (unsigned short*) (rawtile.data);
-      reflectance = static_cast<float>((float)usptr[index]) / 65536.0;
+    // Handle depending on bit depth
+    if( rawtile.bpc == 8 ){
+      ptr = (unsigned char*) (rawtile.data);
+      reflectance = static_cast<float>((float)((unsigned char*)ptr)[index]) / 255.0;
     }
-    else{
-      ucptr = (unsigned char*) rawtile.data;
-      reflectance = static_cast<float>((float)ucptr[index]) / 256.0;
+    else if( rawtile.bpc == 16 ){
+      ptr = (unsigned short*) (rawtile.data);
+      reflectance = static_cast<float>((float)((unsigned short*)ptr)[index]) / 65535.0;
+    }
+    else if( rawtile.bpc == 32 ){
+      if( rawtile.sampleType == FIXEDPOINT ) {
+        ptr = (unsigned int*) rawtile.data;
+        reflectance = static_cast<float>((float)((unsigned int*)ptr)[index]);
+      }
+      else {
+        ptr = (float*) rawtile.data;
+        reflectance = static_cast<float>((float)((float*)ptr)[index]);
+      }
     }
 
     spectrum.push_front( reflectance );
@@ -137,11 +145,9 @@ void SPECTRA::run( Session* session, const std::string& argument ){
 
   session->out->printf( "</spectra>" );
 
-  session->out->printf( "\r\n" );
-
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "SPECTRA :: Error flushing jpeg tile" << endl;
+      *(session->logfile) << "SPECTRA :: Error flushing XML" << endl;
     }
   }
 

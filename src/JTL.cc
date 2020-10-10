@@ -1,11 +1,11 @@
 /*
-    IIP JTLS Command Handler Class Member Function
+    IIP JTL Command Handler Class Member Function
 
-    Copyright (C) 2006-2009 Ruven Pillay.
+    Copyright (C) 2006-2016 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
+    the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -14,61 +14,70 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 #include "Task.h"
-#include "ColourTransforms.h"
+#include "Transforms.h"
 
+#include <cmath>
 #include <sstream>
 
 using namespace std;
 
 
-
-void JTL::run( Session* session, const std::string& argument ){
-
-  /* The argument should consist of 2 comma separated values:
-     1) resolution
-     2) tile number
-  */
+void JTL::send( Session* session, int resolution, int tile ){
 
   if( session->loglevel >= 3 ) (*session->logfile) << "JTL handler reached" << endl;
-  session = session;
 
-  int resolution, tile;
+  Timer function_timer;
 
 
   // Time this command
   if( session->loglevel >= 2 ) command_timer.start();
 
 
-  // Parse the argument list
-  int delimitter = argument.find( "," );
-  resolution = atoi( argument.substr( 0, delimitter ).c_str() );
+  // If we have requested a rotation, remap the tile index to rotated coordinates
+  if( (int)((session->view)->getRotation()) % 360 == 90 ){
 
-  delimitter = argument.find( "," );
-  tile = atoi( argument.substr( delimitter + 1, argument.length() ).c_str() );
+  }
+  else if( (int)((session->view)->getRotation()) % 360 == 270 ){
 
-  //Sanity check
-  if( (resolution<0) || (tile<0) ){
-    ostringstream error;
-    error << "JTL :: Invalid resolution/tile number: " << resolution << "," << tile; 
-    throw error.str();
+  }
+  else if( (int)((session->view)->getRotation()) % 360 == 180 ){
+    int num_res = (*session->image)->getNumResolutions();
+    unsigned int im_width = (*session->image)->image_widths[num_res-resolution-1];
+    unsigned int im_height = (*session->image)->image_heights[num_res-resolution-1];
+    unsigned int tw = (*session->image)->getTileWidth();
+    //    unsigned int th = (*session->image)->getTileHeight();
+    int ntiles = (int) ceil( (double)im_width/tw ) * (int) ceil( (double)im_height/tw );
+    tile = ntiles - tile - 1;
   }
 
+
+  // Sanity check
+  if( (resolution<0) || (tile<0) ){
+    ostringstream error;
+    error << "JTL :: Invalid resolution/tile number: " << resolution << "," << tile;
+    throw error.str();
+  }
 
   TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 
   CompressionType ct;
-  if( (*session->image)->getColourSpace() == CIELAB ) ct = UNCOMPRESSED;
-  else if( (*session->image)->getNumBitsPerPixel() == 16 ) ct = UNCOMPRESSED;
-  else if( session->view->getContrast() != 1.0 ) ct = UNCOMPRESSED;
+  if( (*session->image)->getNumBitsPerPixel() > 8 || (*session->image)->getColourSpace() == CIELAB
+      || (*session->image)->getNumChannels() == 2 || (*session->image)->getNumChannels() > 3
+      || session->view->getContrast() != 1.0 || session->view->getGamma() != 1.0
+      || session->view->getRotation() != 0.0 || session->view->shaded
+      || session->view->cmapped || session->view->inverted
+      || session->view->ctw.size() ) ct = UNCOMPRESSED;
   else ct = JPEG;
 
+
   RawTile rawtile = tilemanager.getTile( resolution, tile, session->view->xangle,
-					 session->view->yangle, session->view->layers, ct );
+					 session->view->yangle, session->view->getLayers(), ct );
+
 
   int len = rawtile.dataLength;
 
@@ -76,77 +85,189 @@ void JTL::run( Session* session, const std::string& argument ){
     *(session->logfile) << "JTL :: Tile size: " << rawtile.width << " x " << rawtile.height << endl
 			<< "JTL :: Channels per sample: " << rawtile.channels << endl
 			<< "JTL :: Bits per channel: " << rawtile.bpc << endl
-			<< "JTL :: Compressed tile size is " << len << endl;
+			<< "JTL :: Data size is " << len << " bytes" << endl;
   }
 
 
-  float contrast = session->view->getContrast();
-  unsigned int w = (*session->image)->getTileWidth();
-  //  unsigned int h = (*session->image)->getTileHeight();
-
-
-
-  // Convert CIELAB to sRGB, performing tile cropping if necessary
+  // Convert CIELAB to sRGB
   if( (*session->image)->getColourSpace() == CIELAB ){
-    if( session->loglevel >= 4 ) *(session->logfile) << "JTL :: Converting from CIELAB->sRGB" << endl;
 
-    unsigned char* buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
-    unsigned char* ptr = (unsigned char*) rawtile.data;
-    for( unsigned int j=0; j<rawtile.height; j++ ){
-      for( unsigned int i=0; i<rawtile.width*rawtile.channels; i+=rawtile.channels ){
-	iip_LAB2sRGB( &ptr[j*w*rawtile.channels + i], &buf[j*rawtile.width*rawtile.channels + i] );
-      }
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Converting from CIELAB->sRGB";
+      function_timer.start();
     }
-
-    // Delete our old tile data and set it to our new buffer
-    delete[] ptr;
-    rawtile.data = buf;
+    filter_LAB2sRGB( rawtile );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
   }
 
-  // Handle 16bit images or contrast adjustments, performing tile cropping if necessary
-  else if( (rawtile.bpc==16) || (contrast !=1.0) ){
 
-    // Normalise 16bit images to 8bit for JPEG
-    if( rawtile.bpc == 16 ) contrast = contrast / 256.0;
+  // Only use our float pipeline if necessary
+  if( rawtile.bpc > 8 || session->view->floatProcessing() ){
 
-    float v;
-    if( session->loglevel >= 4 ) *(session->logfile) << "JTL :: Applying contrast scaling of " << contrast << endl;
+    // Apply normalization and float conversion
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Normalizing and converting to float";
+      function_timer.start();
+    }
+    filter_normalize( rawtile, (*session->image)->max, (*session->image)->min );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
 
-    unsigned int dataLength = rawtile.width*rawtile.height*rawtile.channels;
-    unsigned char* buf = new unsigned char[ dataLength ];
 
-    for( unsigned int j=0; j<rawtile.height; j++ ){
-      for( unsigned int i=0; i<rawtile.width*rawtile.channels; i++ ){
-
-	if( rawtile.bpc == 16 ){
-	  unsigned short* sptr = (unsigned short*) rawtile.data;
-	  v = (float) sptr[j*w*rawtile.channels + i];
-	}
-	else{
-	  unsigned char* sptr = (unsigned char*) rawtile.data;
-	  v = (float) sptr[j*w*rawtile.channels + i];
-	}
-
-	v = v * contrast;
-	if( v > 255.0 ) v = 255.0;
-	if( v < 0.0 ) v = 0.0;
-	buf[j*rawtile.width*rawtile.channels + i] = (unsigned char) v;
+    // Apply hill shading if requested
+    if( session->view->shaded ){
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << "JTL :: Applying hill-shading";
+	function_timer.start();
+      }
+      filter_shade( rawtile, session->view->shade[0], session->view->shade[1] );
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
       }
     }
 
-    // Copy this new buffer back
-    memcpy(rawtile.data, buf, dataLength);
-    rawtile.dataLength = dataLength;
 
-    // And delete our buffer
-    delete[] buf;
+    // Apply color twist if requested
+    if( session->view->ctw.size() ){
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << "JTL :: Applying color twist";
+	function_timer.start();
+      }
+      filter_twist( rawtile, session->view->ctw );
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
+
+
+    // Apply any gamma correction
+    if( session->view->getGamma() != 1.0 ){
+      float gamma = session->view->getGamma();
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << "JTL :: Applying gamma of " << gamma;
+	function_timer.start();
+      }
+      filter_gamma( rawtile, gamma);
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
+
+
+    // Apply inversion if requested
+    if( session->view->inverted ){
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << "JTL :: Applying inversion";
+	function_timer.start();
+      }
+      filter_inv( rawtile );
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
+
+
+    // Apply color mapping if requested
+    if( session->view->cmapped ){
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << "JTL :: Applying color map";
+	function_timer.start();
+      }
+      filter_cmap( rawtile, session->view->cmap );
+      if( session->loglevel >= 4 ){
+	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+      }
+    }
+
+
+    // Apply any contrast adjustments and/or clip to 8bit from 16 or 32 bit
+    float contrast = session->view->getContrast();
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Applying contrast of " << contrast << " and converting to 8 bit";
+      function_timer.start();
+    }
+    filter_contrast( rawtile, contrast );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
+
+  }
+
+
+  // Reduce to 1 or 3 bands if we have an alpha channel or a multi-band image
+  if( rawtile.channels == 2 || rawtile.channels > 3 ){
+    unsigned int bands = (rawtile.channels==2) ? 1 : 3;
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Flattening channels to " << bands;
+      function_timer.start();
+    }
+    filter_flatten( rawtile, bands );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
+
+
+  // Convert to greyscale if requested
+  if( (*session->image)->getColourSpace() == sRGB && session->view->colourspace == GREYSCALE ){
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Converting to greyscale";
+      function_timer.start();
+    }
+    filter_greyscale( rawtile );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
+  }
+
+
+  // Apply flip
+  if( session->view->flip != 0 ){
+    Timer flip_timer;
+    if( session->loglevel >= 5 ){
+      flip_timer.start();
+    }
+
+    filter_flip( rawtile, session->view->flip  );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "JTL :: Flipping image ";
+      if( session->view->flip == 1 ) *(session->logfile) << "horizontally";
+      else *(session->logfile) << "vertically";
+      *(session->logfile) << " in " << flip_timer.getTime() << " microseconds" << endl;
+    }
+  }
+
+
+  // Apply rotation - can apply this safely after gamma and contrast adjustment
+  if( session->view->getRotation() != 0.0 ){
+    float rotation = session->view->getRotation();
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Rotating image by " << rotation << " degrees";
+      function_timer.start();
+    }
+    filter_rotate( rawtile, rotation );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+    }
   }
 
 
   // Compress to JPEG
-  if( ct == UNCOMPRESSED ){
-    if( session->loglevel >= 4 ) *(session->logfile) << "JTL :: Compressing UNCOMPRESSED to JPEG" << endl;
+  if( rawtile.compressionType == UNCOMPRESSED ){
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Compressing UNCOMPRESSED to JPEG";
+      function_timer.start();
+    }
     len = session->jpeg->Compress( rawtile );
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << " in " << function_timer.getTime() << " microseconds to "
+                          << rawtile.dataLength << " bytes" << endl;
+
+    }
   }
 
 
@@ -155,12 +276,13 @@ void JTL::run( Session* session, const std::string& argument ){
 
   snprintf( str, 1024,
 	    "Server: iipsrv/%s\r\n"
+	    "X-Powered-By: IIPImage\r\n"
 	    "Content-Type: image/jpeg\r\n"
             "Content-Length: %d\r\n"
-	    "Cache-Control: max-age=%d\r\n"
 	    "Last-Modified: %s\r\n"
+	    "%s\r\n"
 	    "\r\n",
-	    VERSION, len, MAX_AGE, (*session->image)->getTimestamp().c_str() );
+	    VERSION, len,(*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
   session->out->printf( str );
 #endif

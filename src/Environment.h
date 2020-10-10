@@ -1,11 +1,11 @@
 /*
     IIP Environment Variable Class
 
-    Copyright (C) 2006-2010 Ruven Pillay.
+    Copyright (C) 2006-2016 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
+    the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -14,8 +14,8 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 #ifndef _ENVIRONMENT_H
@@ -23,7 +23,7 @@
 
 
 /* Define some default values
- */ 
+ */
 #define VERBOSITY 1
 #define LOGFILE "/tmp/iipsrv.log"
 #define MAX_IMAGE_CACHE_SIZE 10.0
@@ -37,7 +37,10 @@
 #define WATERMARK_OPACITY 1.0
 #define LIBMEMCACHED_SERVERS "localhost"
 #define LIBMEMCACHED_TIMEOUT 86400  // 24 hours
-
+#define INTERPOLATION 1
+#define CORS "";
+#define BASE_URL "";
+#define CACHE_CONTROL "max-age=86400"; // 24 hours
 
 
 #include <string>
@@ -110,7 +113,6 @@ class Environment {
     if( envpara ){
       max_CVT = atoi( envpara );
       if( max_CVT < 64 ) max_CVT = 64;
-      if( max_CVT == -1 ) max_CVT = -1;
     }
     else max_CVT = MAX_CVT;
 
@@ -130,11 +132,11 @@ class Environment {
 
   static std::string getFileSystemPrefix(){
     char* envpara = getenv( "FILESYSTEM_PREFIX" );
-    std::string filesystem_prefix; 
-    if( envpara ){ 
-      filesystem_prefix = std::string( envpara ); 
-    } 
-    else filesystem_prefix = FILESYSTEM_PREFIX; 
+    std::string filesystem_prefix;
+    if( envpara ){
+      filesystem_prefix = std::string( envpara );
+    }
+    else filesystem_prefix = FILESYSTEM_PREFIX;
 
     return filesystem_prefix;
   }
@@ -157,16 +159,16 @@ class Environment {
     char* envpara = getenv( "WATERMARK_PROBABILITY" );
 
     if( envpara ){
-      watermark_probability = atof( envpara ); 
-      if( watermark_probability > 1.0 ) watermark_probability = 1.0; 
-      if( watermark_probability < 0 ) watermark_probability = 0.0; 
+      watermark_probability = atof( envpara );
+      if( watermark_probability > 1.0 ) watermark_probability = 1.0;
+      if( watermark_probability < 0 ) watermark_probability = 0.0;
     }
 
     return watermark_probability;
   }
 
 
-  static float getWatermarkOpacity(){ 
+  static float getWatermarkOpacity(){
     float watermark_opacity = WATERMARK_OPACITY;
     char* envpara = getenv( "WATERMARK_OPACITY" );
 
@@ -202,7 +204,41 @@ class Environment {
   }
 
 
+  static unsigned int getInterpolation(){
+    char* envpara = getenv( "INTERPOLATION" );
+    unsigned int interpolation;
+    if( envpara ) interpolation = atoi( envpara );
+    else interpolation = INTERPOLATION;
 
+    return interpolation;
+  }
+
+
+  static std::string getCORS(){
+    char* envpara = getenv( "CORS" );
+    std::string cors;
+    if( envpara ) cors = std::string( envpara );
+    else cors = CORS;
+    return cors;
+  }
+
+
+  static std::string getBaseURL(){
+    char* envpara = getenv( "BASE_URL" );
+    std::string base_url;
+    if( envpara ) base_url = std::string( envpara );
+    else base_url = BASE_URL;
+    return base_url;
+  }
+
+
+  static std::string getCacheControl(){
+    char* envpara = getenv( "CACHE_CONTROL" );
+    std::string cache_control;
+    if( envpara ) cache_control = std::string( envpara );
+    else cache_control = CACHE_CONTROL;
+    return cache_control;
+  }
 
 };
 

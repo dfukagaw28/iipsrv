@@ -1,11 +1,11 @@
 /*
     IIP TIL Command Handler Class Member Function
 
-    Copyright (C) 2006-2008 Ruven Pillay.
+    Copyright (C) 2006-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
+    the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -14,8 +14,8 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 
@@ -113,10 +113,10 @@ void TIL::run( Session* session, const std::string& a ){
     snprintf( str, 1024,
 	      "Server: iipsrv/%s\r\n"
 	      "Content-Type: application/vnd.netfpx\r\n"
-	      "Cache-Control: max-age=%d\r\n"
 	      "Last-Modified: %s\r\n"
+	      "%s\r\n"
 	      "\r\n",
-	      VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str() );
+	      VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
     session->out->printf( (const char*)str );
   }
@@ -130,7 +130,7 @@ void TIL::run( Session* session, const std::string& a ){
       // Get our tile using our tile manager
       TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
       RawTile rawtile = tilemanager.getTile( resolution, n, session->view->xangle,
-					     session->view->yangle, session->view->layers, JPEG );
+					     session->view->yangle, session->view->getLayers(), JPEG );
 
       int len = rawtile.dataLength;
 

@@ -7,11 +7,11 @@
     Culture of the Czech Republic. 
 
 
-    Copyright (C) 2009 Ruven Pillay.
+    Copyright (C) 2009-2015 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
+    the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -20,14 +20,14 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 #include <cmath>
 
 #include "Task.h"
-#include "ColourTransforms.h"
+#include "Transforms.h"
 
 
 
@@ -35,7 +35,7 @@ using namespace std;
 
 
 // Windows does not provide a log2 function!
-#if _MSC_VER
+#if (!defined HAVE_LOG2) || (defined _MSC_VER)
 double log2(double max){
   return log((double)max)/log((double)2);
 }
@@ -45,7 +45,6 @@ double log2(double max){
 void DeepZoom::run( Session* session, const std::string& argument ){
 
   if( session->loglevel >= 3 ) (*session->logfile) << "DeepZoom handler reached" << endl;
-  session = session;
 
   // Time this command
   if( session->loglevel >= 2 ) command_timer.start();
@@ -70,9 +69,6 @@ void DeepZoom::run( Session* session, const std::string& argument ){
   // As we don't have an independent FIF request, we need to run it now
   FIF fif;
   fif.run( session, prefix );
-
-  // Load image info
-  (*session->image)->loadImageInfo( session->view->xangle, session->view->yangle );
 
 
   // Get the full image size and the total number of resolutions available
@@ -113,25 +109,24 @@ void DeepZoom::run( Session* session, const std::string& argument ){
     snprintf( str, 1024,
 	      "Server: iipsrv/%s\r\n"
 	      "Content-Type: application/xml\r\n"
-	      "Cache-Control: max-age=%d\r\n"
 	      "Last-Modified: %s\r\n"
+	      "%s\r\n"
 	      "\r\n"
 	      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
 	      "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\"\r\n"
 	      "TileSize=\"%d\" Overlap=\"0\" Format=\"jpg\">"
 	      "<Size Width=\"%d\" Height=\"%d\"/>"
 	      "</Image>",
-	      VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str(), tw, width, height );
+	      VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str(), tw, width, height );
 
     session->out->printf( (const char*) str );
-    session->out->printf( "\r\n" );
     session->response->setImageSent();
 
     return;
   }
 
 
-  // Get the tile coordinates. DeepZoom requests are of the form $image_files/r/x-y.jpg
+  // Get the tile coordinates. DeepZoom requests are of the form $image_files/r/x_y.jpg
   // where r is the resolution number and x and y are the tile coordinates
   
   int resolution, x, y;
@@ -153,7 +148,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
   // Take into account the extra zoom levels required by the DeepZoom spec
   resolution = resolution - (dzi_res-numResolutions) - 1;
   if( resolution < 0 ) resolution = 0;
-  if( (unsigned int)resolution > numResolutions ) resolution = numResolutions-1;
+  if( (unsigned int)resolution > numResolutions-1 ) resolution = numResolutions-1;
 
   if( session->loglevel >= 2 ){
     *(session->logfile) << "DeepZoom :: Tile request for resolution: "
@@ -176,127 +171,10 @@ void DeepZoom::run( Session* session, const std::string& argument ){
   unsigned int tile = y*ntlx + x;
 
 
-  // Get our tile
-  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
+  // Simply pass this on to our JTL send command
+  JTL jtl;
+  jtl.send( session, resolution, tile );
 
-  CompressionType ct;
-  if( (*session->image)->getColourSpace() == CIELAB ) ct = UNCOMPRESSED;
-  else if( (*session->image)->getNumBitsPerPixel() == 16 ) ct = UNCOMPRESSED;
-  else if( session->view->getContrast() != 1.0 ) ct = UNCOMPRESSED;
-  else ct = JPEG;
-
-
-  RawTile rawtile = tilemanager.getTile( resolution, tile, session->view->xangle,
-					 session->view->yangle, session->view->layers, ct );
-
-  int len = rawtile.dataLength;
-
-  if( session->loglevel >= 3 ){
-    *(session->logfile) << "DeepZoom :: Tile size: " << rawtile.width << " x " << rawtile.height << endl
-			<< "DeepZoom :: Channels per sample: " << rawtile.channels << endl
-			<< "DeepZoom :: Bits per channel: " << rawtile.bpc << endl
-			<< "DeepZoom :: Compressed tile size is " << len << endl;
-  }
-
-
-
-  float contrast = session->view->getContrast();
-
-  unsigned char* buf;
-  unsigned char* ptr = (unsigned char*) rawtile.data;
-
-
-  // Convert CIELAB to sRGB, performing tile cropping if necessary
-  if( (*session->image)->getColourSpace() == CIELAB ){
-    if( session->loglevel >= 4 ) *(session->logfile) << "DeepZoom :: Converting from CIELAB->sRGB" << endl;
-
-    buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
-    for( unsigned int j=0; j<rawtile.height; j++ ){
-      for( unsigned int i=0; i<rawtile.width*rawtile.channels; i+=rawtile.channels ){
-	iip_LAB2sRGB( &ptr[j*tw*rawtile.channels + i], &buf[j*rawtile.width*rawtile.channels + i] );
-      }
-    }
-    delete[] ptr;
-    rawtile.data = buf;
-  }
-
-  // Handle 16bit images or contrast adjustments
-  else if( (rawtile.bpc==16) || (contrast !=1.0) ){
-
-    // Normalise 16bit images to 8bit for JPEG
-    if( rawtile.bpc == 16 ) contrast = contrast / 256.0;
-
-    float v;
-    if( session->loglevel >= 4 ) *(session->logfile) << "DeepZoom :: Applying contrast scaling of " << contrast << endl;
-
-    unsigned int dataLength = rawtile.width*rawtile.height*rawtile.channels;
-    buf = new unsigned char[ dataLength ];
-    for( unsigned int j=0; j<rawtile.height; j++ ){
-      for( unsigned int i=0; i<rawtile.width*rawtile.channels; i++ ){
-
-	if( rawtile.bpc == 16 ){
-	  unsigned short* sptr = (unsigned short*) rawtile.data;
-	  v = sptr[j*tw*rawtile.channels + i];
-	}
-	else{
-	  unsigned char* sptr = (unsigned char*) rawtile.data;
-	  v = sptr[j*tw*rawtile.channels + i];
-	}
-
-	v = v * contrast;
-	if( v > 255.0 ) v = 255.0;
-	if( v < 0.0 ) v = 0.0;
-	buf[j*rawtile.width*rawtile.channels + i] = (unsigned char) v;
-      }
-    }
-
-    // Copy this new buffer back
-    memcpy(rawtile.data, buf, dataLength);
-    rawtile.dataLength = dataLength;
-
-    // And delete our buffer
-    delete[] buf;
-  }
-
-
-  // Compress to JPEG
-  if( ct == UNCOMPRESSED ){
-    if( session->loglevel >= 4 ) *(session->logfile) << "DeepZoom :: Compressing UNCOMPRESSED to JPEG" << endl;
-    len = session->jpeg->Compress( rawtile );
-  }
-
-
-#ifndef DEBUG
-  char str[1024];
-  snprintf( str, 1024,
-	    "Server: iipsrv/%s\r\n"
-	    "Content-Type: image/jpeg\r\n"
-            "Content-Length: %d\r\n"
-	    "Cache-Control: max-age=%d\r\n"
-	    "Last-Modified: %s\r\n"
-	    "\r\n",
-	    VERSION, len, MAX_AGE, (*session->image)->getTimestamp().c_str() );
-
-  session->out->printf( (const char*) str );
-#endif
-
-
-  if( session->out->putStr( (const char*) rawtile.data, len ) != len ){
-    if( session->loglevel >= 1 ){
-      *(session->logfile) << "DeepZoom :: Error writing jpeg tile" << endl;
-    }
-  }
-
-
-  if( session->out->flush() == -1 ) {
-    if( session->loglevel >= 1 ){
-      *(session->logfile) << "DeepZoom :: Error flushing jpeg tile" << endl;
-    }
-  }
-
-
-  // Inform our response object that we have sent something to the client
-  session->response->setImageSent();
 
   // Total DeepZoom response time
   if( session->loglevel >= 2 ){
