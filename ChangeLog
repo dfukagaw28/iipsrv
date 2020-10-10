@@ -1,3 +1,160 @@
+15/04/2009: Version 0.9.9 Released
+
+
+15/04/2011:
+	- Fix to View.h to properly take into account max layers variable.
+
+
+14/04/2011:
+	- Minor logging update to Zoomify.cc.
+
+
+13/04/2011:
+	- Updated VC++ project files.
+	- Minor changes to logging in Main.cc.
+	- Updated autoconf files.
+
+
+08/04/2011:
+	- Change to TileManager.cc to take into account whether a tile is padded
+	  or not when applying a watermark.
+
+
+06/04/2011:
+	- Changes to allow compilation on Windows with Visual C++ Express 2010.
+	  New windows subfolder with missing time definitions and VC solution file.
+	  Fixes also include definition of snprintf, log2 and S_ISREG, which are
+	  all missing in Windows. Many thanks to Rob "Bubba" Hines for his help in
+	  porting.
+
+
+21/03/2011:
+	- Added extra NULL assignment to Task pointer after catch block to avoid
+	  problems with uninitialized memory being deleted.
+	- Added SIGINT handler for Ctrl-C interruptions with strsignal() to
+	  display a more meaningful message.
+
+
+17/03/2011:
+	- Clean-up of signed/unsigned variables in IIPImage.h and KakaduImage.h.
+
+
+15/03/2011:
+	- Added sanity check for requested resolutions and tiles in JTL.cc.
+	- Fixed problem with edge tiles and watermarking.
+	- Clean-up of error message in TPTImage.cc.
+
+
+14/03/2011:
+	- Fixed problem with standalone mode. Can now bind to an FCGI socket by
+	  running iipsrv on the command line with the argument --bind.
+	  For example: ./iipsrv.fcgi --bind localhost:9000
+	- Fixed memory problem reported by valgrind with 16bit images.
+	  Now simply use memcpy instead of re-assigning memory blocks. Changes to
+	  JTL.cc, DeepZoom.cc and Zoomify.cc.
+	- Added extra buffer overhead during JPEG compression.
+	- Minor fixes to buffer copy code in Writer.h.
+	- Fixed memory leak in Memcached code - need to explicitly free returned
+	  objects!
+
+
+01/12/2010:
+	- Modified Main.cc to not check in Memcached if there has been a
+	  If-Modified-Since parameter sent and to not store 304 or error replies.
+	  Otherwise we risk to send 304 replies to requests from uncached browsers.
+
+
+25/11/2010:
+	- Removed final CRLF from JTL, Zoomify and DeepZoom requests, which causes
+	  problems with http pipelining in firefox.
+
+
+24/11/2010:
+	- Added extra checks to both TPTImage and KakaduImage for whether the
+	  requested resolution exists.
+	- Added ability to KakaduImage to downsize resolutions that were not generated
+	  during encoding.
+	- Added decompressor.finish() to catch block as finish crashes if called after
+	  thread environment shut down.
+
+
+18/11/2010:
+	- Fixed problem when clipping when applying watermarks for both 8 and 16 bit images.
+
+
+15/11/2010:
+	- Added memcached support via libmemcached. List of servers passed via
+	  MEMCACHED_SERVERS environment variable. Length of time the cache
+	  remains valid set by optional MEMCACHED_TIMEOUT environment variable
+	  (default is 3600 seconds). Storage is at output level, rather than tile
+	  level, so is complementary to internal tile cache.
+	  Thanks to Moravian Library in Brno (Moravska zemska knihovna v Brne,
+	  http://www.mzk.cz/) R&D grant MK00009494301 & Old Maps Online
+	  (http://www.oldmapsonline.org/) from the Ministry of Culture
+	  of the Czech Republic.
+
+
+06/11/2010:
+	- Modification to Cache.h to use string::capacity() function instead of length()
+	  to determine space used by string.
+
+
+31/10/2010:
+	- Added simple watermarking support via Watermark class. New environment
+	  variables added for the watermark image, the opacity and probability.
+	  Changes mainly to the TileManager and Session class. Watermarking happens
+	  transparently within the TileManager class for all tiles. Thanks to
+	  Moravian Library in Brno (Moravska zemska knihovna v Brne, http://www.mzk.cz/)
+	  R&D grant MK00009494301 & Old Maps Online (http://www.oldmapsonline.org/)
+	  from the Ministry of Culture of the Czech Republic.
+
+
+15/09/2010:
+	- Modified IIPImage.cc to enable handling of images with spectral band
+	  indices with mixtures of 3 or 4 digits. For example, H1_pyr_000_090.tif
+	  and H1_pyr_2500_090.tif.
+
+
+05/03/2010:
+	- Another fix to JPEGCompressor.cc to fix a crash with very small
+	  tiles with libjpeg-8.
+
+
+23/02/2010:
+	- Modified JPEGCompressor.cc to fix compatibility problem with
+	  libjpeg version 8. Simply removed jpeg_write_tables from
+	  InitCompression function.
+
+
+09/02/2010:
+	- Fixed memory leak in Zoomify.cc and DeepZoom.cc
+
+
+11/01/2010:
+	- JPEG2000 support added via the Kakadu SDK. Added new class
+	  KakaduImage derived from the IIPImage class. JPEG2000 support
+	  added thanks to Moravian Library in Brno (Moravska zemska knihovna
+	  v Brne, http://www.mzk.cz/) R&D grant MK00009494301 & Old Maps Online
+	  (http://www.oldmapsonline.org/) from the Ministry of Culture of
+	  the Czech Republic.
+	- Fix to string literal warnings in Writer.h
+
+
+08/01/2010:
+	- Major changes to the HTTP headers sent by iipsrv. Added
+	  HTTP Server id and Last-Modified timestamps to all server output.
+	  Checks are now made for a If-Modified-Since response and a
+	  304 Not Modified reponse returned if the timestamps match.
+	  This should significantly improve server performance.
+
+
+04/01/2010:
+	- Fixed bug in FIF.cc - the file system prefix was not being
+	  initialized for each new image.
+	- Layers environment variable changed to MAX_LAYERS to represent
+	  the maximum number of layers user is allowed to decode.
+
+
 03/12/2009: Version 0.9.8 Released
 
 

@@ -1,7 +1,7 @@
 /*
     IIP Generic Output Writer Classes
 
-    Copyright (C) 2006 Ruven Pillay.
+    Copyright (C) 2006-2010 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -60,19 +60,43 @@ class FCGIWriter {
 
  private:
 
+  
   FCGX_Stream *out;
+  static const unsigned int bufsize = 65536;
+
+  /// Add the message to our buffer
+  void cpy2buf( const char* msg, size_t len ){
+    if( sz+len > bufsize ) buffer = (char*) realloc( buffer, sz+len );
+    memcpy( &buffer[sz], msg, len );
+    sz += len;
+  };
+
 
  public:
 
-  FCGIWriter( FCGX_Stream* o ){ out = o; };
+  char* buffer;
+  size_t sz;
+
+  /// Constructor
+  FCGIWriter( FCGX_Stream* o ){
+    out = o;
+    buffer = (char*) malloc(bufsize);
+    sz = 0;
+  };
+
+  /// Destructor
+  ~FCGIWriter(){ if(buffer) free(buffer); };
 
   int putStr( const char* msg, int len ){
+    cpy2buf( msg, len );
     return FCGX_PutStr( msg, len, out );
   };
   int putS( const char* msg ){
+    cpy2buf( msg, strlen(msg) );
     return FCGX_PutS( msg, out );
   }
   int printf( const char* msg ){
+    cpy2buf( msg, strlen(msg) );
     return FCGX_FPrintF( out, msg );
   };
   int flush(){
@@ -101,7 +125,7 @@ class FileWriter {
     return fputs( msg, out );
   }
   int printf( const char* msg ){
-    return fprintf( out, msg );
+    return fprintf( out, "%s", msg );
   };
   int flush(){
     return fflush( out );

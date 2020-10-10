@@ -1,7 +1,7 @@
 /*
     IIP CVT Command Handler Class Member Function
 
-    Copyright (C) 2006-2009 Ruven Pillay.
+    Copyright (C) 2006-2010 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 #include "Task.h"
 #include "ColourTransforms.h"
 #include <cmath>
-
+#include <algorithm>
 
 using namespace std;
 
@@ -154,7 +154,6 @@ void CVT::run( Session* session, const std::string& a ){
     // Allocate memory for a strip only (tile height x image width)
     unsigned int o_channels = channels;
     if( session->view->shaded ) o_channels = 1;
-    unsigned char* buf = new unsigned char[view_width * src_tile_height * o_channels];
 
 
     // Get the scaling required to get the requested size.
@@ -170,16 +169,24 @@ void CVT::run( Session* session, const std::string& a ){
 			  << ". Nearest pyramid region size is " << view_width << "x" << view_height << endl;
     }
 
+    // Our data buffer
+    unsigned char* buf;
 
     // Create our rawtile object and initialize with our size, channels etc.
     RawTile complete_image( 0, 0, 0, 0, resampled_width, resampled_height, o_channels, 8 );
-    complete_image.dataLength = resampled_width * resampled_height * o_channels;
+    if( (*session->image)->getImageType() == "jpx" || (*session->image)->getImageType() == "jp2" ){
+      complete_image = RawTile( 0, 0, 0, 0, view_width, view_height, o_channels, 8 );
+      complete_image.dataLength = view_width * view_height * o_channels;
+      buf = new unsigned char[view_width * view_height * o_channels];
+    }
+    else{
+      complete_image.dataLength = resampled_width * resampled_height * o_channels;
+      buf = new unsigned char[view_width * src_tile_height * o_channels];
+    }
+
     complete_image.data = buf;
     complete_image.memoryManaged = 0; // We will handle memory ourselves
 
-
-    // Initialise our JPEG compression object
-    session->jpeg->InitCompression( complete_image, src_tile_height );
 
 #ifndef DEBUG
 
@@ -196,16 +203,23 @@ void CVT::run( Session* session, const std::string& a ){
     string basename = filename.substr( pos, filename.rfind(".")-pos );
 
     char str[1024];
-    snprintf( str, 1024, "Cache-Control: max-age=86400\r\n"
-			 "Last-Modified: Mon, 1 Jan 2000 00:00:00 GMT\r\n"
-			 "ETag: \"CVT\"\r\n"
+    snprintf( str, 1024, "Server: iipsrv/%s\r\n"
+	                 "Cache-Control: max-age=%d\r\n"
+			 "Last-Modified: %s\r\n"
  			 "Content-Type: image/jpeg\r\n"
 			 "Content-Disposition: inline;filename=\"%s.jpg\"\r\n"
-	                 "\r\n", basename.c_str() );
+	                 "\r\n",
+	                 VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str(), basename.c_str() );
 
     session->out->printf( (const char*) str );
 #endif
 
+
+    // Initialise our JPEG compression object
+    if( (*session->image)->getImageType() == "jpx" || (*session->image)->getImageType() == "jp2" ){
+      session->jpeg->InitCompression( complete_image, view_height );
+    }
+    else session->jpeg->InitCompression( complete_image, src_tile_height );
 
     // Send the JPEG header to the client
     len = session->jpeg->getHeaderSize();
@@ -218,8 +232,43 @@ void CVT::run( Session* session, const std::string& a ){
     // Keep track of the current height in order to correct for any errors due to resample rounding
     int current_height = 0;
 
-    // Decode the image strip by strip and dynamically compress with JPEG
 
+    // Temporary work around! We should really generalize this and put the strip tiling into the TPTImage
+    // class itself
+    if( (*session->image)->getImageType() == "jpx" || (*session->image)->getImageType() == "jp2" ){
+      (*session->image)->getRegion( session->view->xangle, session->view->yangle,
+				    requested_res, session->view->layers,
+				    view_left, view_top, view_width, view_height, buf );
+
+
+      *(session->logfile) << "CVT :: About to JPEG compress image" << endl;
+
+      // Compress the strip
+      len = session->jpeg->CompressStrip( buf, view_height );
+
+
+      if( session->loglevel >= 3 ){
+	*(session->logfile) << "CVT :: Compressed data strip length is " << len << endl;
+      }
+
+
+      // Send this strip out to the client
+      if( len != session->out->putStr( (const char*) complete_image.data, len ) ){
+	if( session->loglevel >= 1 ){
+	  *(session->logfile) << "CVT :: Error writing jpeg strip data: " << len << endl;
+	}
+      }
+
+      if( session->out->flush() == -1 ) {
+	if( session->loglevel >= 1 ){
+	  *(session->logfile) << "CVT :: Error flushing jpeg tile" << endl;
+	}
+      }
+
+    }
+    else{
+
+    // Decode the image strip by strip and dynamically compress with JPEG
     for( unsigned int i=starty; i<endy; i++ ){
 
       unsigned int buffer_index = 0;
@@ -234,7 +283,7 @@ void CVT::run( Session* session, const std::string& a ){
 	if( session->loglevel >= 2 ) tile_timer.start();
 
 	// Get an uncompressed tile from our TileManager
-	TileManager tilemanager( session->tileCache, *session->image, session->jpeg, session->logfile, session->loglevel );
+	TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 	RawTile rawtile = tilemanager.getTile( requested_res, (i*ntlx) + j, session->view->xangle, session->view->yangle,
 					       session->view->layers, UNCOMPRESSED );
 
@@ -412,6 +461,8 @@ void CVT::run( Session* session, const std::string& a ){
 	}
       }
     }
+
+    } // End of if JPEG2000 else block
 
     // Finish off the image compression
     len = session->jpeg->Finish();

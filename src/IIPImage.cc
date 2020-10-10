@@ -27,8 +27,13 @@
 #include <glob.h>
 #endif
 
+#if _MSC_VER
+#define S_ISREG(mode) (((mode) & S_IFMT) == S_IFREG)
+#endif
+
 #include <cstdio>
 #include <sys/stat.h>
+#include <sstream>
 
 
 using namespace std;
@@ -128,17 +133,17 @@ void IIPImage::testImageType()
     // Check for sequence
     glob_t gdat;
     string filename = path + fileNamePattern + "000_090.*";
-      
+
     if( glob( filename.c_str(), 0, NULL, &gdat ) != 0 ){
       globfree( &gdat );
-      string message = path + fileNamePattern + string( " is neither a file or part of an image sequence" );
-      throw message;      
-    }  
+      string message = path + string( " is neither a file or part of an image sequence" );
+      throw message;
+    }
     if( gdat.gl_pathc != 1 ){
       globfree( &gdat );
       string message = string( "There are multiple file extensions matching " )  + filename;
-      throw message;      
-    }  
+      throw message;
+    }
 
     string tmp( gdat.gl_pathv[0] );
     globfree( &gdat );
@@ -164,12 +169,22 @@ void IIPImage::testImageType()
 
 void IIPImage::updateTimestamp( const string& path )
 {
-#ifdef HAVE_TIME_H
-    // Get a modification time for our image
-    struct stat sb;
-    stat( path.c_str(), &sb );
-    timestamp = sb.st_mtime;
-#endif
+  // Get a modification time for our image
+  struct stat sb;
+  stat( path.c_str(), &sb );
+  timestamp = sb.st_mtime;
+}
+
+
+const std::string IIPImage::getTimestamp()
+{
+  tm *t;
+  const time_t tm1 = timestamp;
+  t = gmtime( &tm1 );
+  char strt[128];
+  strftime( strt, 128, "%a, %d %b %Y %H:%M:%S GMT", t );
+
+  return string(strt);
 }
 
 
@@ -186,7 +201,7 @@ void IIPImage::measureVerticalAngles()
   
   if( glob( filename.c_str(), 0, NULL, &gdat ) != 0 ){
     globfree( &gdat );
-  }  
+  }
 
   for( i=0; i < gdat.gl_pathc; i++ ){
 
@@ -195,7 +210,7 @@ void IIPImage::measureVerticalAngles()
     string tmp( gdat.gl_pathv[i] );
     int len = tmp.length() - type.length() - 1;
     string sequence_no = tmp.substr( len-3, 3 );
-    angle = atoi( sequence_no.c_str() );
+    istringstream(sequence_no) >> angle;
     verticalAnglesList.push_front( angle );
   }
 
@@ -222,21 +237,22 @@ void IIPImage::measureHorizontalAngles()
 
   if( glob( filename.c_str(), 0, NULL, &gdat ) != 0 ){
     globfree( &gdat );
-  }  
+  }
 
   for( i=0; i < gdat.gl_pathc; i++ ){
 
     // Extract angle no from path name.
     int angle;
     string tmp( gdat.gl_pathv[i] );
-    int len = tmp.length() - type.length() - 1;
-    string horizontalAnglesList_no = tmp.substr( len-7, 3 );
-    angle = atoi( (char*) horizontalAnglesList_no.c_str() );
+    int start = string(fileSystemPrefix + imagePath + fileNamePattern).length();
+    int end = tmp.find_last_of("_");
+    string n = tmp.substr( start, end-start );
+    istringstream(n) >> angle;
     horizontalAnglesList.push_front( angle );
   }
 
   horizontalAnglesList.sort();
-  
+
   globfree( &gdat );
 
 #endif
@@ -271,15 +287,15 @@ const string IIPImage::getFileName( int seq, int ang )
 {
   char name[1024];
 
-  if( isFile ) return fileSystemPrefix+imagePath;
+  if( isFile ){
+    return fileSystemPrefix+imagePath;
+  }
   else{
+    // The angle or spectral band indices should be a minimum of 3 digits when padded
     snprintf( name, 1024,
-	      "%s%s%.3d_%.3d.%s", (fileSystemPrefix+imagePath).c_str(), fileNamePattern.c_str(),
+	      "%s%s%03d_%03d.%s", (fileSystemPrefix+imagePath).c_str(), fileNamePattern.c_str(),
 	      seq, ang, type.c_str() );
-    
-    string file( name );
-
-    return file;
+    return string( name );
   }
 }
 

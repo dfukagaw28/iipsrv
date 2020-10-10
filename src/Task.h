@@ -34,6 +34,11 @@
 #include "Timer.h"
 #include "Writer.h"
 #include "Cache.h"
+#include "Watermark.h"
+
+
+// Define our http header cache max age
+#define MAX_AGE 86400
 
 
 // Use the hashmap extensions if we are using >= gcc 3.1
@@ -79,8 +84,10 @@ struct Session {
   JPEGCompressor* jpeg;
   View* view;
   IIPResponse* response;
+  Watermark* watermark;
   int loglevel;
   std::ofstream* logfile;
+  std::map <const std::string, std::string> headers;
 
   imageCacheMapType *imageCache;
   Cache* tileCache;

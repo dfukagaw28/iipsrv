@@ -2,7 +2,7 @@
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2009 Ruven Pillay.
+    Copyright (C) 2000-2011 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,11 @@
 #ifndef _IIPIMAGE_H
 #define _IIPIMAGE_H
 
+
+// Fix missing snprintf in Windows
+#if _MSC_VER
+#define snprintf _snprintf
+#endif
 
 
 #include <string>
@@ -89,7 +94,7 @@ class IIPImage {
   ColourSpaces colourspace;
 
   /// The number of available resolutions in this image
-  int numResolutions;
+  unsigned int numResolutions;
 
   /// The bits per pixel for this image
   unsigned int bpp;
@@ -147,6 +152,9 @@ class IIPImage {
 
   /// Get the image timestamp
   void updateTimestamp( const std::string& );
+
+  /// Get a HTTP RFC 1123 formatted timestamp
+  const std::string getTimestamp();
 
   /// Check whether this object has been initialised
   bool set() { return isSet; };
@@ -232,13 +240,14 @@ class IIPImage {
       \param ha horizontal angle
       \param va vertical angle
       \param r resolution
-      \param t tile number
-      \param x top left of region
-      \param y top left of region
-      \param w region width
-      \param h region height
+      \param layers number of layers to decode
+      \param x offset in x direction
+      \param y offset in y direction
+      \param w width of region
+      \param h height of region
+      \param b image buffer
   */
-  virtual RawTile getRegion( int ha, int va, unsigned int r, unsigned int t, int x, int y, int w, int h ) { return RawTile(); };
+    virtual void getRegion( int ha, int va, unsigned int r, int layers, int x, int y, unsigned int w, unsigned int h, unsigned char* b ){ return; };
 
   /// Assignment operator
   const IIPImage& operator = ( const IIPImage& );

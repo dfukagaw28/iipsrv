@@ -23,6 +23,9 @@
 #define _VIEW_H
 
 
+#include <cstddef>
+
+
 /// Class to intelligently handle Image Transforms
 
 class View{
@@ -42,6 +45,7 @@ class View{
   unsigned int requested_height;              /// Height requested by HEI command
   float contrast;                             /// Contrast adjustment requested by CNT command
 
+
   /// Internal function to calculate the resolution associated with a width
   ///  or height request. This also takes into account maximum size limits.
   /** \param m maximum size
@@ -56,7 +60,9 @@ class View{
   int yangle;                                  /// Vertical View
   bool shaded;                                 /// Whether to use shading view
   int shade[3];                                /// Shading incident light angles (x,y,z)
+  int max_layers;			       /// Maximum number of quality layers allowed
   int layers;			               /// Number of quality layers
+
 
   /// Constructor
   View() {
@@ -67,7 +73,7 @@ class View{
     contrast = 1.0;
     xangle = 0; yangle = 90;
     shaded = false; shade[0] = 0; shade[1] = 0; shade[2] = 0;
-    layers = 1;
+    max_layers = 0; layers = 0;
   };
 
 
@@ -162,10 +168,16 @@ class View{
   void setImageSize( unsigned int w, unsigned int h ){ width = w; height = h; };
 
 
-  /// Set the number of quality layers to decode
-  /** \param l Number of layers to decode */
-  void setLayers( int l ){ layers = l; };
+  /// Limit the maximum number of quality layers we are allowed to decode
+  /** \param l Max number of layers to decode */
+  void setMaxLayers( int l ){ max_layers = l; };
 
+  /// Set the number of quality layers to decode, limiting to our max value
+  /** \param l Number of layers to decode */
+  void setLayers( int l ){ layers = ( l<max_layers )? l : max_layers; };
+
+  /// Return the number of layers to decode
+  unsigned int getLayers(){ return layers; };
 
   /// Return the contrast adjustment
   float getContrast(){ return contrast; };
@@ -187,9 +199,6 @@ class View{
 
   /// Return the pixel height of the viewport
   unsigned int getViewHeight();
-
-  /// Return the number of layers to decode
-  unsigned int getLayers(){ return layers; };
 
   /// Indicate whether the viewport has been set
   bool viewPortSet();

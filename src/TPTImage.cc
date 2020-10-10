@@ -21,7 +21,6 @@
 
 
 #include "TPTImage.h"
-#include <iostream>
 #include <sstream>
 
 
@@ -158,6 +157,14 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   uint32 rem_x, rem_y;
   uint16 colour;
   string filename;
+
+
+  // Check the resolution exists
+  if( res > numResolutions ){
+    ostringstream error;
+    error << "TPTImage :: Asked for non-existant resolution: " << res;
+    throw error.str();
+  }
 
 
   // Try to open image and allocate a buffer if not already open

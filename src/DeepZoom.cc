@@ -34,6 +34,13 @@
 using namespace std;
 
 
+// Windows does not provide a log2 function!
+#if _MSC_VER
+double log2(double max){
+  return log((double)max)/log((double)2);
+}
+#endif
+
 
 void DeepZoom::run( Session* session, const std::string& argument ){
 
@@ -103,17 +110,18 @@ void DeepZoom::run( Session* session, const std::string& argument ){
     }
 
     char str[1024];
-    snprintf( str, 1024, "Content-Type: application/xml\r\n"
-	      "Cache-Control: max-age=604800\r\n"
-	      "Last-Modified: Sat, 01 Jan 2000 00:00:00 GMT\r\n"
-	      "Etag: DeepZoom.dzi\r\n"
+    snprintf( str, 1024,
+	      "Server: iipsrv/%s\r\n"
+	      "Content-Type: application/xml\r\n"
+	      "Cache-Control: max-age=%d\r\n"
+	      "Last-Modified: %s\r\n"
 	      "\r\n"
 	      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
 	      "<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\"\r\n"
 	      "TileSize=\"%d\" Overlap=\"0\" Format=\"jpg\">"
 	      "<Size Width=\"%d\" Height=\"%d\"/>"
 	      "</Image>",
-	      tw, width, height );
+	      VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str(), tw, width, height );
 
     session->out->printf( (const char*) str );
     session->out->printf( "\r\n" );
@@ -169,7 +177,7 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
 
   // Get our tile
-  TileManager tilemanager( session->tileCache, *session->image, session->jpeg, session->logfile, session->loglevel );
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 
   CompressionType ct;
   if( (*session->image)->getColourSpace() == CIELAB ) ct = UNCOMPRESSED;
@@ -194,13 +202,15 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
   float contrast = session->view->getContrast();
 
-  unsigned char* buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
+  unsigned char* buf;
   unsigned char* ptr = (unsigned char*) rawtile.data;
 
 
   // Convert CIELAB to sRGB, performing tile cropping if necessary
   if( (*session->image)->getColourSpace() == CIELAB ){
     if( session->loglevel >= 4 ) *(session->logfile) << "DeepZoom :: Converting from CIELAB->sRGB" << endl;
+
+    buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
     for( unsigned int j=0; j<rawtile.height; j++ ){
       for( unsigned int i=0; i<rawtile.width*rawtile.channels; i+=rawtile.channels ){
 	iip_LAB2sRGB( &ptr[j*tw*rawtile.channels + i], &buf[j*rawtile.width*rawtile.channels + i] );
@@ -218,6 +228,9 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
     float v;
     if( session->loglevel >= 4 ) *(session->logfile) << "DeepZoom :: Applying contrast scaling of " << contrast << endl;
+
+    unsigned int dataLength = rawtile.width*rawtile.height*rawtile.channels;
+    buf = new unsigned char[ dataLength ];
     for( unsigned int j=0; j<rawtile.height; j++ ){
       for( unsigned int i=0; i<rawtile.width*rawtile.channels; i++ ){
 
@@ -236,8 +249,13 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 	buf[j*rawtile.width*rawtile.channels + i] = (unsigned char) v;
       }
     }
-    delete[] ptr;
-    rawtile.data = buf;
+
+    // Copy this new buffer back
+    memcpy(rawtile.data, buf, dataLength);
+    rawtile.dataLength = dataLength;
+
+    // And delete our buffer
+    delete[] buf;
   }
 
 
@@ -250,12 +268,14 @@ void DeepZoom::run( Session* session, const std::string& argument ){
 
 #ifndef DEBUG
   char str[1024];
-  snprintf( str, 1024, "Content-Type: image/jpeg\r\n"
+  snprintf( str, 1024,
+	    "Server: iipsrv/%s\r\n"
+	    "Content-Type: image/jpeg\r\n"
             "Content-Length: %d\r\n"
-	    "Cache-Control: max-age=604800\r\n"
-	    "Last-Modified: Sat, 01 Jan 2000 00:00:00 GMT\r\n"
-	    "Etag: deepzoom.jpg\r\n"
-	    "\r\n", len );
+	    "Cache-Control: max-age=%d\r\n"
+	    "Last-Modified: %s\r\n"
+	    "\r\n",
+	    VERSION, len, MAX_AGE, (*session->image)->getTimestamp().c_str() );
 
   session->out->printf( (const char*) str );
 #endif
@@ -267,8 +287,6 @@ void DeepZoom::run( Session* session, const std::string& argument ){
     }
   }
 
-
-  session->out->printf( "\r\n" );
 
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){

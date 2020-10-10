@@ -99,23 +99,23 @@ void Zoomify::run( Session* session, const std::string& argument ){
   // These 2 phases are handled separately
   if( suffix == "ImageProperties.xml" ){
 
-    if( session->loglevel >= 2 )
+    if( session->loglevel >= 2 ){
       *(session->logfile) << "Zoomify :: ImageProperties.xml request" << endl;
-
-
-    *(session->logfile) << "Zoomify :: Total resolutions: " << numResolutions << ", image width: " << width
-			<< ", image height: " << height << endl;
+      *(session->logfile) << "Zoomify :: Total resolutions: " << numResolutions << ", image width: " << width
+			  << ", image height: " << height << endl;
+    }
 
     int ntiles = (int) ceil( (double)width/tw ) * (int) ceil( (double)height/tw );
 
     char str[1024];
-    snprintf( str, 1024, "Content-Type: application/xml\r\n"
-	      "Cache-Control: max-age=604800\r\n"
-	      "Last-Modified: Sat, 01 Jan 2000 00:00:00 GMT\r\n"
-	      "Etag: ImageProperties.xml\r\n"
+    snprintf( str, 1024,
+	      "Server: iipsrv/%s\r\n"
+	      "Content-Type: application/xml\r\n"
+	      "Cache-Control: max-age=%d\r\n"
+	      "Last-Modified: %s\r\n"
 	      "\r\n"
 	      "<IMAGE_PROPERTIES WIDTH=\"%d\" HEIGHT=\"%d\" NUMTILES=\"%d\" NUMIMAGES=\"1\" VERSION=\"1.8\" TILESIZE=\"%d\" />",
-	      width, height, ntiles, tw );
+	      VERSION, MAX_AGE,(*session->image)->getTimestamp().c_str(), width, height, ntiles, tw );
 
     session->out->printf( (const char*) str );
     session->out->printf( "\r\n" );
@@ -158,7 +158,7 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
 
   // Get our tile
-  TileManager tilemanager( session->tileCache, *session->image, session->jpeg, session->logfile, session->loglevel );
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 
   CompressionType ct;
   if( (*session->image)->getColourSpace() == CIELAB ) ct = UNCOMPRESSED;
@@ -183,13 +183,15 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
   float contrast = session->view->getContrast();
 
-  unsigned char* buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
+  unsigned char* buf;
   unsigned char* ptr = (unsigned char*) rawtile.data;
 
 
   // Convert CIELAB to sRGB, performing tile cropping if necessary
   if( (*session->image)->getColourSpace() == CIELAB ){
     if( session->loglevel >= 4 ) *(session->logfile) << "Zoomify :: Converting from CIELAB->sRGB" << endl;
+
+    buf = new unsigned char[ rawtile.width*rawtile.height*rawtile.channels ];
     for( unsigned int j=0; j<rawtile.height; j++ ){
       for( unsigned int i=0; i<rawtile.width*rawtile.channels; i+=rawtile.channels ){
 	iip_LAB2sRGB( &ptr[j*tw*rawtile.channels + i], &buf[j*rawtile.width*rawtile.channels + i] );
@@ -207,6 +209,9 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
     float v;
     if( session->loglevel >= 4 ) *(session->logfile) << "Zoomify :: Applying contrast scaling of " << contrast << endl;
+
+    unsigned int dataLength = rawtile.width*rawtile.height*rawtile.channels;
+    buf = new unsigned char[ dataLength ];
     for( unsigned int j=0; j<rawtile.height; j++ ){
       for( unsigned int i=0; i<rawtile.width*rawtile.channels; i++ ){
 
@@ -225,8 +230,13 @@ void Zoomify::run( Session* session, const std::string& argument ){
 	buf[j*rawtile.width*rawtile.channels + i] = (unsigned char) v;
       }
     }
-    delete[] ptr;
-    rawtile.data = buf;
+
+    // Copy this new buffer back
+    memcpy(rawtile.data, buf, dataLength);
+    rawtile.dataLength = dataLength;
+
+    // And delete our buffer
+    delete[] buf;
   }
 
 
@@ -239,12 +249,14 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
 #ifndef DEBUG
   char str[1024];
-  snprintf( str, 1024, "Content-Type: image/jpeg\r\n"
+  snprintf( str, 1024,
+	    "Server: iipsrv/%s\r\n"
+	    "Content-Type: image/jpeg\r\n"
             "Content-Length: %d\r\n"
-	    "Cache-Control: max-age=604800\r\n"
-	    "Last-Modified: Sat, 01 Jan 2000 00:00:00 GMT\r\n"
-	    "Etag: zoomify.jpg\r\n"
-	    "\r\n", len );
+	    "Cache-Control: max-age=%d\r\n"
+	    "Last-Modified: %s\r\n"
+	    "\r\n",
+	    VERSION, len, MAX_AGE, (*session->image)->getTimestamp().c_str() );
 
   session->out->printf( (const char*) str );
 #endif
@@ -257,8 +269,6 @@ void Zoomify::run( Session* session, const std::string& argument ){
   }
 
 
-  session->out->printf( "\r\n" );
-
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){
       *(session->logfile) << "Zoomify :: Error flushing jpeg tile" << endl;
@@ -268,6 +278,7 @@ void Zoomify::run( Session* session, const std::string& argument ){
 
   // Inform our response object that we have sent something to the client
   session->response->setImageSent();
+
 
   // Total Zoomify response time
   if( session->loglevel >= 2 ){

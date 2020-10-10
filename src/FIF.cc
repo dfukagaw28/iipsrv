@@ -1,7 +1,7 @@
 /*
     IIP FIF Command Handler Class Member Function
 
-    Copyright (C) 2006-2009 Ruven Pillay.
+    Copyright (C) 2006-2010 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,10 +19,14 @@
 */
 
 
+#include <algorithm>
 #include "Task.h"
 #include "Environment.h"
 #include "TPTImage.h"
 
+#ifdef HAVE_KAKADU
+#include "KakaduImage.h"
+#endif
 
 using namespace std;
 
@@ -62,8 +66,8 @@ void FIF::run( Session* session, const string& src ){
       break;
     case '%':
       // Don't assume well-formed input
-      if( std::distance(iter, src.end()) >= 2 &&
-	  std::isxdigit(*(iter + 1)) && std::isxdigit(*(iter + 2)) ){
+      if( distance(iter, src.end()) >= 2 &&
+          isxdigit(*(iter + 1)) && isxdigit(*(iter + 2)) ){
 
 	// Filter out embedded NULL bytes of the form %00 from the URL
 	if( (*(iter+1)=='0' && *(iter+2)=='0') ){
@@ -108,6 +112,7 @@ void FIF::run( Session* session, const string& src ){
 
   // Get our image pattern variable
   string filename_pattern = Environment::getFileNamePattern();
+  
 
 
   // Put the image opening into a try block so that we can set
@@ -119,13 +124,13 @@ void FIF::run( Session* session, const string& src ){
 
     if( session->imageCache->empty() ){
 
+      if( session->loglevel >= 1 ) *(session->logfile) << "FIF :: Image cache initialisation" << endl;
       test = IIPImage( argument );
       test.setFileNamePattern( filename_pattern );
       test.setFileSystemPrefix( filesystem_prefix );
       test.Initialise();
 
       (*session->imageCache)[argument] = test;
-      if( session->loglevel >= 1 ) *(session->logfile) << "FIF :: Image cache initialisation" << endl;
     }
 
     else{
@@ -137,10 +142,11 @@ void FIF::run( Session* session, const string& src ){
 	}
       }
       else{
+	if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: Image cache miss" << endl;
 	test = IIPImage( argument );
 	test.setFileNamePattern( filename_pattern );
+	test.setFileSystemPrefix( filesystem_prefix );
 	test.Initialise();
-	if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: Image cache miss" << endl;
 	if( session->imageCache->size() >= 100 ) session->imageCache->erase( session->imageCache->end() );
 	(*session->imageCache)[argument] = test;
       }
@@ -149,7 +155,7 @@ void FIF::run( Session* session, const string& src ){
 
 
     /***************************************************************
-	      Test for different image types - only TIFF is native for now
+      Test for different image types - only TIFF is native for now
     ***************************************************************/
 
     string imtype = test.getImageType();
@@ -161,6 +167,12 @@ void FIF::run( Session* session, const string& src ){
       if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: TIFF image requested" << endl;
       *session->image = new TPTImage( test );
     }
+#ifdef HAVE_KAKADU
+    else if( imtype=="jpx" || imtype=="jp2" ){
+      if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: JPEG2000 image requested" << endl;
+      *session->image = new KakaduImage( test );
+    }
+#endif
     else throw string( "Unsupported image type: " + imtype );
 
     /* Disable module loading for now!
@@ -204,13 +216,16 @@ void FIF::run( Session* session, const string& src ){
 
 
     (*session->image)->openImage();
+    session->response->setLastModified( (*session->image)->getTimestamp() );
 
     if( session->loglevel >= 2 ){
       *(session->logfile) << "FIF :: Image dimensions are " << (*session->image)->getImageWidth()
 			  << " x " << (*session->image)->getImageHeight() << endl;
-#ifdef HAVE_TIME_H
-      *(session->logfile) << "FIF :: Image timestamp: " << ctime( &(*session->image)->timestamp );
-#endif
+      tm *t;
+      t = gmtime( &(*session->image)->timestamp );
+      char strt[128];
+      strftime( strt, 128, "%a, %d %b %Y %H:%M:%S GMT", t );
+      *(session->logfile) << "FIF :: Image timestamp: " << strt << endl;
     }
 
   }
@@ -221,11 +236,34 @@ void FIF::run( Session* session, const string& src ){
   }
 
 
+  // Check whether we have had an if modified since header. If so, compare to our image timestamp
+  if( session->headers.find("HTTP_IF_MODIFIED_SINCE") != session->headers.end() ){
+
+      tm mod_t;
+      strptime( (session->headers)["HTTP_IF_MODIFIED_SINCE"].c_str(), "%a, %d %b %Y %H:%M:%S GMT", &mod_t );
+      time_t t;
+      t = timegm(&mod_t);
+      if( (*session->image)->timestamp <= t ){
+
+	if( session->loglevel >= 2 ){
+	  *(session->logfile)	<< "FIF :: Unmodified content" << endl;
+	  *(session->logfile)	<< "FIF :: Total command time " << command_timer.getTime() << " microseconds" << endl;
+	}
+
+	throw( 304 );
+      }
+      else{
+	if( session->loglevel >= 2 ){
+	  *(session->logfile)	<< "FIF :: Content modified" << endl;
+	}
+      }
+  }
+
   // Reset our angle values
   session->view->xangle = 0;
   session->view->yangle = 90;
 
-	  
+
   if( session->loglevel >= 2 ){
     *(session->logfile)	<< "FIF :: Total command time " << command_timer.getTime() << " microseconds" << endl;
   }

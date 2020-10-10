@@ -26,10 +26,9 @@
 #include <cstring>
 #include <string>
 #include <cstdlib>
+#include <ctime>
 
-#ifndef HAVE_TIME_H
-typedef unsigned long int time_t;
-#endif
+
 
 /// Colour spaces - GREYSCALE, sRGB and CIELAB
 enum ColourSpaces { GREYSCALE, sRGB, CIELAB };

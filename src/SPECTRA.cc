@@ -69,7 +69,7 @@ void SPECTRA::run( Session* session, const std::string& argument ){
   }
   
 
-  TileManager tilemanager( session->tileCache, *session->image, session->jpeg, session->logfile, session->loglevel );
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
 
   // Use our horizontal views function to get a list of available spectral images
   list <int> views = (*session->image)->getHorizontalViewsList();
@@ -81,11 +81,13 @@ void SPECTRA::run( Session* session, const std::string& argument ){
 
 #ifndef DEBUG
   char str[1024];
-  snprintf( str, 1024, "Content-Type: application/xml\r\n"
-	    "Cache-Control: max-age=604800\r\n"
-	    "Last-Modified: Sat, 01 Jan 2000 00:00:00 GMT\r\n"
-	    "Etag: spectra\r\n"
-	    "\r\n" );
+  snprintf( str, 1024,
+	    "Server: iipsrv/%s\r\n"
+	    "Content-Type: application/xml\r\n"
+	    "Cache-Control: max-age=%d\r\n"
+	    "Last-Modified: %s\r\n"
+	    "\r\n",
+	    VERSION, MAX_AGE, (*session->image)->getTimestamp().c_str() );
 
   session->out->printf( (const char*) str );
   session->out->flush();

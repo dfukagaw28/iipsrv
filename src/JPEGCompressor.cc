@@ -1,6 +1,6 @@
-/*  JPEG class wrapper to ijg jpeg library 
+/*  JPEG class wrapper to ijg jpeg library
 
-    Copyright (C) 2000-2005 Ruven Pillay.
+    Copyright (C) 2000-2010 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -86,15 +86,21 @@ iip_init_destination (j_compress_ptr cinfo)
   /* Add a kB because when we have very small tiles, the JPEG data
      including header can end up being larger than the original raw
      data size!
+     However, this seems to break something in Kakadu, so disable in this case
   */
-  mx += 1024;
+#ifndef HAVE_KAKADU
+  mx += 2048;
+#endif
+
 
   /* Allocate the output buffer --- it will be released when done with image
-   */
+   
   dest->buffer = (JOCTET *)
     (*cinfo->mem->alloc_small) ( (j_common_ptr) cinfo, JPOOL_IMAGE,
 				 mx * sizeof(JOCTET) );
-  
+  */
+
+  dest->buffer = new JOCTET[mx];
   dest->size = mx;
 
   // Set compressor pointers for library
@@ -146,6 +152,8 @@ void iip_term_destination( j_compress_ptr cinfo )
   }
 
   dest->size = datacount;
+
+  delete[] dest->buffer;
 }
 
 
@@ -181,7 +189,6 @@ void JPEGCompressor::InitCompression( RawTile& rawtile, unsigned int strip_heigh
   //  or something like that. So, we use an extern "C" function declared at the top
   //  of this file and pass our arguments through this. I'm sure there's a better
   //  way of doing this, but this seems to work :/
-
   setup_error_functions( &cinfo );
 
   jpeg_create_compress( &cinfo );
@@ -222,8 +229,6 @@ void JPEGCompressor::InitCompression( RawTile& rawtile, unsigned int strip_heigh
   cinfo.dct_method = JDCT_FASTEST;
 
   jpeg_set_quality( &cinfo, Q, TRUE );
-
-  jpeg_write_tables(&cinfo);
 
   jpeg_start_compress( &cinfo, TRUE );
 
@@ -280,7 +285,7 @@ unsigned int JPEGCompressor::CompressStrip( unsigned char* buf, unsigned int til
 
 
   // Set compressor pointers for library
-  size_t mx = (cinfo.image_width * dest->strip_height * cinfo.input_components) + 1024;
+  size_t mx = (cinfo.image_width * dest->strip_height * cinfo.input_components);
   dest->pub.next_output_byte = dest->buffer;
   dest->pub.free_in_buffer = mx;
   cinfo.next_scanline = 0;
@@ -311,7 +316,9 @@ unsigned int JPEGCompressor::Finish() throw (string)
   // Tidy up and de-allocate memory
   // There seems to be a problem with jpeg_finish_compress :-(
   // We've manually added the EOI markers, so we don't have to bother calling it
-  //   jpeg_finish_compress( &cinfo );
+
+  delete[] dest->buffer;
+  //jpeg_finish_compress( &cinfo );
   jpeg_destroy_compress( &cinfo );
   
 
@@ -325,7 +332,6 @@ int JPEGCompressor::Compress( RawTile& rawtile ) throw (string)
 {
 
   // Do some initialisation
-  
   data = (unsigned char*) rawtile.data;
   struct jpeg_compress_struct cinfo;
   struct jpeg_error_mgr jerr;
@@ -340,7 +346,7 @@ int JPEGCompressor::Compress( RawTile& rawtile ) throw (string)
 
 
   // Make sure we only try to compress images with 1 or 3 channels
-  if( ! ( (channels==1) || (channels==3) )  ){
+  if( ! ( (channels==1) || (channels==3) ) ){
     throw string( "JPEGCompressor: JPEG can only handle images of either 1 or 3 channels" );
   }
 
@@ -383,8 +389,8 @@ int JPEGCompressor::Compress( RawTile& rawtile ) throw (string)
   dest->pub.term_destination = iip_term_destination;
   dest->strip_height = 0;
 
-  dest->source = data;
-
+  // Allocate memory for our destination
+  dest->source = new unsigned char[width*height*channels + 2048]; // Add an extra 2k for extra buffering
 
   // Set floating point quality (highest, but possibly slower depending
   //  on hardware)
@@ -408,10 +414,10 @@ int JPEGCompressor::Compress( RawTile& rawtile ) throw (string)
   int row_stride = width * channels;
 
 
-  // Try to pass the whole image array at once if it is less than 256x256 pixels:
+  // Try to pass the whole image array at once if it is less than 512x512 pixels:
   // Should be faster than scanlines.
 
-  if( (row_stride * height) <= (256*256*channels) ){
+  if( (row_stride * height) <= (512*512*channels) ){
 
     JSAMPROW *array = new JSAMPROW[height+1];
     for( y=0; y < height; y++ ){
@@ -433,10 +439,14 @@ int JPEGCompressor::Compress( RawTile& rawtile ) throw (string)
   // Tidy up, get the compressed data size and de-allocate memory
   jpeg_finish_compress( &cinfo );
   y = dest->size;
+
+  // Copy memory back to the tile
+  memcpy( rawtile.data, dest->source, y );
+  delete[] dest->source;
   jpeg_destroy_compress( &cinfo );
 
 
-  // Set the tile compression type
+  // Set the tile compression parameters
   rawtile.dataLength = y;
   rawtile.compressionType = JPEG;
   rawtile.quality = Q;

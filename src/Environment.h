@@ -1,7 +1,7 @@
 /*
     IIP Environment Variable Class
 
-    Copyright (C) 2006-2009 Ruven Pillay.
+    Copyright (C) 2006-2010 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,21 +23,29 @@
 
 
 /* Define some default values
- */
+ */ 
 #define VERBOSITY 1
 #define LOGFILE "/tmp/iipsrv.log"
 #define MAX_IMAGE_CACHE_SIZE 10.0
 #define FILENAME_PATTERN "_pyr_"
 #define JPEG_QUALITY 75
 #define MAX_CVT 5000
-#define LAYERS 1
+#define MAX_LAYERS 0
 #define FILESYSTEM_PREFIX ""
+#define WATERMARK ""
+#define WATERMARK_PROBABILITY 1.0
+#define WATERMARK_OPACITY 1.0
+#define LIBMEMCACHED_SERVERS "localhost"
+#define LIBMEMCACHED_TIMEOUT 86400  // 24 hours
+
+
 
 #include <string>
 
 
 /// Class to obtain environment variables
 class Environment {
+
 
  public:
 
@@ -110,11 +118,11 @@ class Environment {
   }
 
 
-  static int getLayers(){
-    char* envpara = getenv( "LAYERS" );
+  static int getMaxLayers(){
+    char* envpara = getenv( "MAX_LAYERS" );
     int layers;
     if( envpara ) layers = atoi( envpara );
-    else layers = LAYERS;
+    else layers = MAX_LAYERS;
 
     return layers;
   }
@@ -130,6 +138,71 @@ class Environment {
 
     return filesystem_prefix;
   }
+
+
+  static std::string getWatermark(){
+    char* envpara = getenv( "WATERMARK" );
+    std::string watermark;
+    if( envpara ){
+      watermark = std::string( envpara );
+    }
+    else watermark = WATERMARK;
+
+    return watermark;
+  }
+
+
+  static float getWatermarkProbability(){
+    float watermark_probability = WATERMARK_PROBABILITY;
+    char* envpara = getenv( "WATERMARK_PROBABILITY" );
+
+    if( envpara ){
+      watermark_probability = atof( envpara ); 
+      if( watermark_probability > 1.0 ) watermark_probability = 1.0; 
+      if( watermark_probability < 0 ) watermark_probability = 0.0; 
+    }
+
+    return watermark_probability;
+  }
+
+
+  static float getWatermarkOpacity(){ 
+    float watermark_opacity = WATERMARK_OPACITY;
+    char* envpara = getenv( "WATERMARK_OPACITY" );
+
+    if( envpara ){
+      watermark_opacity = atof( envpara );
+      if( watermark_opacity > 1.0 ) watermark_opacity = 1.0;
+      if( watermark_opacity < 0 ) watermark_opacity = 0.0;
+    }
+
+    return watermark_opacity;
+  }
+
+
+  static std::string getMemcachedServers(){
+    char* envpara = getenv( "MEMCACHED_SERVERS" );
+    std::string memcached_servers;
+    if( envpara ){
+      memcached_servers = std::string( envpara );
+    }
+    else memcached_servers = LIBMEMCACHED_SERVERS;
+
+    return memcached_servers;
+  }
+
+
+  static unsigned int getMemcachedTimeout(){
+    char* envpara = getenv( "MEMCACHED_TIMEOUT" );
+    unsigned int memcached_timeout;
+    if( envpara ) memcached_timeout = atoi( envpara );
+    else memcached_timeout = LIBMEMCACHED_TIMEOUT;
+
+    return memcached_timeout;
+  }
+
+
+
 
 };
 

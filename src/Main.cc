@@ -1,7 +1,7 @@
 /*
     IIP FCGI server module - Main loop.
 
-    Copyright (C) 2000-2009 Ruven Pillay
+    Copyright (C) 2000-2011 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,8 +31,6 @@
 #include <string>
 #include <utility>
 #include <map>
-#include <sys/time.h>
-
 
 #include "TPTImage.h"
 #include "JPEGCompressor.h"
@@ -45,6 +43,9 @@
 #include "Environment.h"
 #include "Writer.h"
 
+#ifdef HAVE_MEMCACHED
+#include "Memcached.h"
+#endif
 
 #ifdef ENABLE_DL
 #include "DSOImage.h"
@@ -77,14 +78,17 @@ void IIPSignalHandler( int signal )
 {
   if( loglevel >= 1 ){
 
-#ifdef HAVE_TIME_H	
-	time_t current_time = time( NULL );
-	char *date = ctime( &current_time );
+    time_t current_time = time( NULL );
+    char *date = ctime( &current_time );
+
+    // No strsignal on Windows
+#ifdef WIN32
+    int sigstr = signal;
 #else
-	char *date = "Today";
+    char *sigstr = strsignal( signal );
 #endif
 
-    logfile << endl << "Caught signal " << signal << ". "
+    logfile << endl << "Caught " << sigstr << " signal. "
 	    << "Terminating after " << IIPcount << " accesses" << endl
 	    << date
 	    << "<----------------------------------->" << endl << endl;
@@ -106,12 +110,7 @@ int main( int argc, char *argv[] )
 
 
   // Define ourselves a version
-#ifdef VERSION
   string version = string( VERSION );
-#else
-  string version = string( "0.9.9.9" );
-#endif
-
 
 
 
@@ -139,13 +138,9 @@ int main( int argc, char *argv[] )
     // Put a header marker and credit in the file
     else{
 
-      // Get current time if possible
-#ifdef HAVE_TIME_H	
+      // Get current time
       time_t current_time = time( NULL );
       char *date = ctime( &current_time );
-#else
-      char *date = "Today";
-#endif
 
       logfile << "<----------------------------------->" << endl
 	      << date << endl
@@ -164,8 +159,9 @@ int main( int argc, char *argv[] )
 
   FCGX_Request request;
   int listen_socket = 0;
+  bool standalone = false;
 
-  if( argv[1] && (string(argv[1]) == "--standalone") ){
+  if( argv[1] && (string(argv[1]) == "--bind") ){
     string socket = argv[2];
     if( !socket.length() ){
       logfile << "No socket specified" << endl << endl;
@@ -176,13 +172,18 @@ int main( int argc, char *argv[] )
       logfile << "Unable to open socket '" << socket << "'" << endl << endl;
       exit(1);
     }
+    standalone = true;
+    logfile << "Running in standalone mode on socket: " << socket << endl << endl;
   }
 
   if( FCGX_InitRequest( &request, listen_socket, 0 ) ) return(1);
 
+  // Check whether we are really in FCGI mode - only if we are not in standalone mode
   if( FCGX_IsCGI() ){
-    if( loglevel >= 1 ) logfile << "CGI-only mode detected. Terminating" << endl << endl;
-    return( 1 );
+    if( !standalone ){
+      if( loglevel >= 1 ) logfile << "CGI-only mode detected" << endl << endl;
+      return( 1 );
+    }
   }
   else{
     if( loglevel >= 1 ) logfile << "Running in FCGI mode" << endl << endl;
@@ -200,32 +201,80 @@ int main( int argc, char *argv[] )
   string filename_pattern = Environment::getFileNamePattern();
 
 
-  //  Get our default quality variable
+  // Get our default quality variable
   int jpeg_quality = Environment::getJPEGQuality();
 
 
-  //  Get our max CVT size
+  // Get our max CVT size
   int max_CVT = Environment::getMaxCVT();
 
 
   // Get the default number of quality layers to decode
-  int layers = Environment::getLayers();
+  int max_layers = Environment::getMaxLayers();
 
 
   // Get the filesystem prefix if any
   string filesystem_prefix = Environment::getFileSystemPrefix();
 
 
+  // Set up our watermark object
+  Watermark watermark( Environment::getWatermark(),
+		       Environment::getWatermarkOpacity(),
+		       Environment::getWatermarkProbability() );
+
+
+  // Print out some information
   if( loglevel >= 1 ){
     logfile << "Setting maximum image cache size to " << max_image_cache_size << "MB" << endl;
     logfile << "Setting filesystem prefix to '" << filesystem_prefix << "'" << endl;
     logfile << "Setting default JPEG quality to " << jpeg_quality << endl;
     logfile << "Setting maximum CVT size to " << max_CVT << endl;
     logfile << "Setting 3D file sequence name pattern to '" << filename_pattern << "'" << endl;
-    logfile << "Setting default decoded quality layers (for supported file formats) to " << layers << endl;
+    if( max_layers > 0 ) logfile << "Setting max quality layers (for supported file formats) to " << max_layers << endl;
+#ifdef HAVE_KAKADU
+    logfile << "Setting up JPEG2000 support via Kakadu SDK" << endl;
+#endif
   }
 
 
+  // Try to load our watermark
+  if( watermark.getImage().length() > 0 ){
+    watermark.init();
+    if( loglevel >= 1 ){
+      if( watermark.isSet() ){
+	logfile << "Loaded watermark image '" << watermark.getImage()
+		<< "': setting probability to " << watermark.getProbability()
+		<< " and opacity to " << watermark.getOpacity() << endl;
+      }
+      else{
+	logfile << "Unable to load watermark image '" << watermark.getImage() << "'" << endl;
+      }
+    }
+  }
+
+
+#ifdef HAVE_MEMCACHED
+
+  // Get our list of memcached servers if we have any and the timeout
+  string memcached_servers = Environment::getMemcachedServers();
+  unsigned int memcached_timeout = Environment::getMemcachedTimeout();
+
+  // Create our memcached object
+  Memcache memcached( memcached_servers, memcached_timeout );
+  if( loglevel >= 1 ){
+    if( memcached.connected() ){
+      logfile << "Memcached support enabled. Connected to servers: '" << memcached_servers
+	      << "' with timeout " << memcached_timeout << endl;
+    }
+    else logfile << "Unable to connect to Memcached servers: '" << memcached.error() << "'" << endl;
+  }
+
+#endif
+
+
+
+  // Add a new line
+  if( loglevel >= 1 ) logfile << endl;
 
 
   /***********************************************************
@@ -273,10 +322,8 @@ int main( int argc, char *argv[] )
 
 
 
-
-
   /***********************************************************
-    Set up a signal handler for USR1, TERM and SIGHUP signals
+    Set up a signal handler for USR1, TERM, HUP and INT signals
     - to simplify things, they can all just shutdown the
       server. We can rely on mod_fastcgi to restart us.
     - SIGUSR1 and SIGHUP don't exist on Windows, though. 
@@ -288,7 +335,7 @@ int main( int argc, char *argv[] )
 #endif
 
   signal( SIGTERM, IIPSignalHandler );
-
+  signal( SIGINT, IIPSignalHandler );
 
 
 
@@ -299,8 +346,11 @@ int main( int argc, char *argv[] )
   }
 
 
-  // Set up some timers and create our tile cache
+  // Set up our request timers and seed our random number generator with the millisecond count from it
   Timer request_timer;
+  srand( request_timer.getTime() );
+
+  // Create our tile cache
   Cache tileCache( max_image_cache_size );
   Task* task = NULL;
 
@@ -343,7 +393,10 @@ int main( int argc, char *argv[] )
       view.setMaxSize( max_CVT );
       if( loglevel >= 2 ) logfile << "CVT maximum viewport size set to " << max_CVT << endl;
     }
-    view.setLayers( layers );
+    if( max_layers > 0 ) view.setMaxLayers( max_layers );
+
+
+
 
 
     // Create an IIPResponse object - we use this for the OBJ requests.
@@ -355,9 +408,9 @@ int main( int argc, char *argv[] )
       
       // Get the query into a string
 #ifdef DEBUG
-      string request_string = argv[1];
+      const string request_string = argv[1];
 #else
-      string request_string = FCGX_GetParam( "QUERY_STRING", request.envp );
+      const string request_string = FCGX_GetParam( "QUERY_STRING", request.envp );
 #endif
 
       // Check that we actually have a request string
@@ -369,6 +422,7 @@ int main( int argc, char *argv[] )
 	logfile << "Full Request is " << request_string << endl;
       }
 
+      
 
       // Set up our session data object
       Session session;
@@ -381,6 +435,33 @@ int main( int argc, char *argv[] )
       session.imageCache = &imageCache;
       session.tileCache = &tileCache;
       session.out = &writer;
+      session.watermark = &watermark;
+      session.headers.empty();
+
+      // Get certain HTTP headers, such as if_modified_since and the query_string
+      char* header = NULL;
+      if( (header = FCGX_GetParam("HTTP_IF_MODIFIED_SINCE", request.envp)) ){
+	session.headers["HTTP_IF_MODIFIED_SINCE"] = string(header);
+	if( loglevel >= 2 ){
+	  logfile << "HTTP Header: If-Modified-Since: " << session.headers["HTTP_IF_MODIFIED_SINCE"] << endl;
+	}
+      }
+      session.headers["QUERY_STRING"] = request_string;
+
+
+#ifdef HAVE_MEMCACHED
+      // Check whether this exists in memcached, but only if we haven't had an if_modified_since
+      // request, which should always be faster to send
+      if( !header ){
+	char* memcached_response = NULL;
+	if( (memcached_response = memcached.retrieve( request_string )) ){
+	  writer.putStr( memcached_response, memcached.length() );
+	  writer.flush();
+	  free( memcached_response );
+	  throw( 100 );
+	}
+      }
+#endif
 
 
       // Parse up the command list
@@ -452,10 +533,29 @@ int main( int argc, char *argv[] )
 	    response.formatResponse() <<
 	    endl << "---" << endl;
 	}
-	if( writer.putS( response.formatResponse().c_str() ) == -1 ){
+	if( writer.printf( response.formatResponse().c_str() ) == -1 ){
 	  if( loglevel >= 1 ) logfile << "Error sending IIPResponse" << endl;
 	}
       }
+
+
+      ////////////////////////////////////////////////////////
+      ////////// Insert the result into Memcached  ///////////
+      ////////// - Note that we never store errors ///////////
+      //////////   or 304 replies                  ///////////
+      ////////////////////////////////////////////////////////
+
+#ifdef HAVE_MEMCACHED
+      if( memcached.connected() ){
+	Timer memcached_timer;
+	memcached_timer.start();
+	memcached.store( session.headers["QUERY_STRING"], writer.buffer, writer.sz );
+	if( loglevel >= 3 ){
+	  logfile << "Memcached :: stored " << writer.sz << " bytes in "
+		  << memcached_timer.getTime() << " microseconds" << endl;
+	}
+      }
+#endif
 
 
 
@@ -464,6 +564,38 @@ int main( int argc, char *argv[] )
       //////////////////////////////////////////////////////
     }
 
+    /* Use this for sending various HTTP status codes
+     */
+    catch( const int& code ){
+
+      string status;
+
+      switch( code ){
+
+        case 304:
+	  status = "Status: 304 Not Modified\r\nServer: iipsrv/" + version + "\r\n\r\n";
+	  writer.printf( status.c_str() );
+	  writer.flush();
+          if( loglevel >= 2 ){
+	    logfile << "Sending HTTP 304 Not Modified" << endl;
+	  }
+	  break;
+
+        case 100:
+	  if( loglevel >= 2 ){
+	    logfile << "Memcached hit" << endl;
+	  }
+	  break;
+
+        default:
+          if( loglevel >= 1 ){
+	    logfile << "Unsupported HTTP status code: " << code << endl << endl;
+	  }
+       }
+    }
+
+    /* Catch any errors
+     */
     catch( const string& error ){
 
       if( loglevel >= 1 ){
@@ -476,14 +608,14 @@ int main( int argc, char *argv[] )
 	    response.formatResponse() <<
 	    endl << "---" << endl;
 	}
-	if( writer.putS( response.formatResponse().c_str() ) == -1 ){
+	if( writer.printf( response.formatResponse().c_str() ) == -1 ){
 	  if( loglevel >= 1 ) logfile << "Error sending IIPResponse" << endl;
 	}
       }
       else{
 	/* Display our advertising banner ;-)
 	 */
-	writer.putS( response.getAdvert( version ).c_str() );
+	writer.printf( response.getAdvert( version ).c_str() );
       }
 
     }
@@ -498,7 +630,7 @@ int main( int argc, char *argv[] )
 
       /* Display our advertising banner ;-)
        */
-      writer.putS( response.getAdvert( version ).c_str() );
+      writer.printf( response.getAdvert( version ).c_str() );
 
     }
 
@@ -506,7 +638,10 @@ int main( int argc, char *argv[] )
     /* Do some cleaning up etc. here after all the potential exceptions
        have been handled
      */
-    if( task ) delete task;
+    if( task ){
+      delete task;
+      task = NULL;
+    }
     delete image;
     image = NULL;
     IIPcount ++;
@@ -514,6 +649,8 @@ int main( int argc, char *argv[] )
 #ifdef DEBUG
     fclose( f );
 #endif
+
+
 
     // How long did this request take?
     if( loglevel >= 2 ){
