@@ -2,7 +2,7 @@
 
 /*  IIP Server: Tiled Pyramidal TIFF handler
 
-    Copyright (C) 2000-2016 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 using namespace std;
 
 
-void TPTImage::openImage() throw (file_error)
+void TPTImage::openImage()
 {
 
   // Insist that the tiff and tile_buf be NULL
@@ -59,7 +59,7 @@ void TPTImage::openImage() throw (file_error)
 }
 
 
-void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
+void TPTImage::loadImageInfo( int seq, int ang )
 {
   tdir_t current_dir;
   int count;
@@ -109,7 +109,9 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
 
   // Handle various colour spaces
   if( colour == PHOTOMETRIC_CIELAB ) colourspace = CIELAB;
-  else if( colour == PHOTOMETRIC_MINISBLACK ) colourspace = GREYSCALE;
+  else if( colour == PHOTOMETRIC_MINISBLACK ){
+    colourspace = (bpc==1)? BINARY : GREYSCALE;
+  }
   else if( colour == PHOTOMETRIC_PALETTE ){
     // Watch out for colourmapped images. These are stored as 1 sample per pixel,
     // but are decoded to 3 channels by libtiff, so declare them as sRGB
@@ -169,6 +171,7 @@ void TPTImage::loadImageInfo( int seq, int ang ) throw(file_error)
   if( TIFFGetField( tiff, TIFFTAG_IMAGEDESCRIPTION, &tmp ) ) metadata["subject"] = tmp;
   if( TIFFGetField( tiff, TIFFTAG_SOFTWARE, &tmp ) ) metadata["app-name"] = tmp;
   if( TIFFGetField( tiff, TIFFTAG_XMLPACKET, &count, &tmp ) ) metadata["xmp"] = string(tmp,count);
+  if( TIFFGetField( tiff, TIFFTAG_ICCPROFILE, &count, &tmp ) ) metadata["icc"] = string(tmp,count);
 
 }
 
@@ -186,7 +189,7 @@ void TPTImage::closeImage()
 }
 
 
-RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsigned int tile ) throw (file_error)
+RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsigned int tile )
 {
   uint32 im_width, im_height, tw, th, ntlx, ntly;
   uint32 rem_x, rem_y;
@@ -224,11 +227,11 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   }
 
 
-  // The first resolution is the highest, so we need to invert 
+  // The first resolution is the highest, so we need to invert
   //  the resolution - can avoid this if we store our images with
-  //  the smallest image first. 
+  //  the smallest image first.
   int vipsres = ( numResolutions - 1 ) - res;
-  
+
 
   // Change to the right directory for the resolution
   if( !TIFFSetDirectory( tiff, vipsres ) ) {
@@ -236,12 +239,12 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   }
 
 
-  // Check that a valid tile number was given  
+  // Check that a valid tile number was given
   if( tile >= TIFFNumberOfTiles( tiff ) ) {
     ostringstream tile_no;
     tile_no << "Asked for non-existent tile: " << tile;
     throw file_error( tile_no.str() );
-  } 
+  }
 
 
   // Get the size of this tile, the current image,
@@ -255,6 +258,12 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
   TIFFGetField( tiff, TIFFTAG_PHOTOMETRIC, &colour );
 //   TIFFGetField( tiff, TIFFTAG_SAMPLESPERPIXEL, &channels );
 //   TIFFGetField( tiff, TIFFTAG_BITSPERSAMPLE, &bpc );
+
+
+  // Make sure this resolution is tiled
+  if( (tw == 0) || (th == 0) ){
+    throw file_error( "Requested resolution is not tiled" );
+  }
 
 
   // Total number of bytes in tile
@@ -285,7 +294,9 @@ RawTile TPTImage::getTile( int seq, int ang, unsigned int res, int layers, unsig
 
   // Handle various colour spaces
   if( colour == PHOTOMETRIC_CIELAB ) colourspace = CIELAB;
-  else if( colour == PHOTOMETRIC_MINISBLACK ) colourspace = GREYSCALE;
+  else if( colour == PHOTOMETRIC_MINISBLACK ){
+    colourspace = (bpc==1)? BINARY : GREYSCALE;
+  }
   else if( colour == PHOTOMETRIC_PALETTE ){
     // Watch out for colourmapped images. There are stored as 1 sample per pixel,
     // but are decoded to 3 channels by libtiff, so declare them as sRGB

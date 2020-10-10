@@ -2,7 +2,7 @@
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2016 Ruven Pillay.
+    Copyright (C) 2000-2019 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 
 
 // Fix missing snprintf in Windows
-#if _MSC_VER
+#if defined _MSC_VER && _MSC_VER<1900
 #define snprintf _snprintf
 #endif
 
@@ -42,6 +42,7 @@
 /// Define our own derived exception class for file errors
 class file_error : public std::runtime_error {
  public:
+  /** @param s error message */
   file_error(std::string s) : std::runtime_error(s) { }
 };
 
@@ -63,7 +64,7 @@ class IIPImage {
  private:
 
   /// Image path supplied
-  std::string imagePath; 
+  std::string imagePath;
 
   /// Prefix to add to paths
   std::string fileSystemPrefix;
@@ -78,7 +79,7 @@ class IIPImage {
   std::string suffix;
 
   /// Private function to determine the image type
-  void testImageType() throw( file_error );
+  void testImageType();
 
   /// If we have a sequence of images, determine which horizontal angles exist
   void measureHorizontalAngles();
@@ -140,6 +141,9 @@ class IIPImage {
   /// If we have an image sequence, the current X and Y position
   int currentX, currentY;
 
+  /// Image histogram
+  std::vector<unsigned int> histogram;
+
   /// STL map to hold string metadata
   std::map <const std::string, std::string> metadata;
 
@@ -189,7 +193,7 @@ class IIPImage {
     timestamp( 0 ) {};
 
   /// Copy Constructor taking reference to another IIPImage object
-  /** @param im IIPImage object
+  /** @param image IIPImage object
    */
   IIPImage( const IIPImage& image )
    : imagePath( image.imagePath ),
@@ -217,6 +221,7 @@ class IIPImage {
     isSet( image.isSet ),
     currentX( image.currentX ),
     currentY( image.currentY ),
+    histogram( image.histogram ),
     metadata( image.metadata ),
     timestamp( image.timestamp ) {};
 
@@ -254,7 +259,7 @@ class IIPImage {
   /// Get the image timestamp
   /** @param s file path
    */
-  void updateTimestamp( const std::string& s ) throw( file_error );
+  void updateTimestamp( const std::string& s );
 
   /// Get a HTTP RFC 1123 formatted timestamp
   const std::string getTimestamp();
@@ -361,12 +366,12 @@ class IIPImage {
       @param y offset in y direction
       @param w width of region
       @param h height of region
-      @param b image buffer
+      @return RawTile image
   */
   virtual RawTile getRegion( int ha, int va, unsigned int r, int layers, int x, int y, unsigned int w, unsigned int h ){ return RawTile(); };
 
   /// Assignment operator
-  /** @param im IIPImage object */
+  /** @param image IIPImage object */
   IIPImage& operator = ( IIPImage image ){
     swap( *this, image );
     return *this;

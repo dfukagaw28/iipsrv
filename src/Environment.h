@@ -1,7 +1,7 @@
 /*
     IIP Environment Variable Class
 
-    Copyright (C) 2006-2016 Ruven Pillay.
+    Copyright (C) 2006-2018 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -37,10 +37,14 @@
 #define WATERMARK_OPACITY 1.0
 #define LIBMEMCACHED_SERVERS "localhost"
 #define LIBMEMCACHED_TIMEOUT 86400  // 24 hours
-#define INTERPOLATION 1
+#define INTERPOLATION 1  // 1: Bilinear
 #define CORS "";
 #define BASE_URL "";
 #define CACHE_CONTROL "max-age=86400"; // 24 hours
+#define ALLOW_UPSCALING true
+#define URI_MAP ""
+#define EMBED_ICC true
+#define KAKADU_READMODE 0
 
 
 #include <string>
@@ -238,6 +242,45 @@ class Environment {
     if( envpara ) cache_control = std::string( envpara );
     else cache_control = CACHE_CONTROL;
     return cache_control;
+  }
+
+
+  static bool getAllowUpscaling(){
+    char* envpara = getenv( "ALLOW_UPSCALING" );
+    bool allow_upscaling;
+    if( envpara ) allow_upscaling =  atoi( envpara ); // Implicit cast to boolean, all values other than '0' treated as true
+    else allow_upscaling = ALLOW_UPSCALING;
+    return allow_upscaling;
+  }
+
+
+  static std::string getURIMap(){
+    char* envpara = getenv( "URI_MAP" );
+    std::string uri_map;
+    if( envpara ) uri_map = std::string( envpara );
+    else uri_map = URI_MAP;
+    return uri_map;
+  }
+
+
+  static unsigned int getEmbedICC(){
+    char* envpara = getenv( "EMBED_ICC" );
+    bool embed;
+    if( envpara ) embed = atoi( envpara );
+    else embed = EMBED_ICC;
+    return embed;
+  }
+
+
+  static unsigned int getKduReadMode(){
+    unsigned int readmode;
+    char* envpara = getenv( "KAKADU_READMODE" );
+    if( envpara ){
+      readmode = atoi( envpara );
+      if( readmode > 2 ) readmode = 2;
+    }
+    else readmode = KAKADU_READMODE;
+    return readmode;
   }
 
 };

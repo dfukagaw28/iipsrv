@@ -1,7 +1,7 @@
 /*
     IIP Generic Task Class
 
-    Copyright (C) 2006-2016 Ruven Pillay
+    Copyright (C) 2006-2019 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,9 +23,8 @@
 #define _TASK_H
 
 
-
 #include <string>
-#include <fstream>
+
 #include "IIPImage.h"
 #include "IIPResponse.h"
 #include "JPEGCompressor.h"
@@ -35,6 +34,8 @@
 #include "Writer.h"
 #include "Cache.h"
 #include "Watermark.h"
+#include "Transforms.h"
+#include "Logger.h"
 #ifdef HAVE_PNG
 #include "PNGCompressor.h"
 #endif
@@ -71,9 +72,11 @@ struct Session {
   View* view;
   IIPResponse* response;
   Watermark* watermark;
+  Transform* processor;
   int loglevel;
-  std::ofstream* logfile;
+  Logger* logfile;
   std::map <const std::string, std::string> headers;
+  std::map <const std::string, unsigned int> codecOptions;
 
   imageCacheMapType *imageCache;
   Cache* tileCache;
@@ -141,6 +144,7 @@ class OBJ : public Task {
   void horizontal_views();
   void vertical_views();
   void min_max_values();
+  void resolutions();
   void metadata( std::string field );
 
 };
@@ -275,17 +279,20 @@ class SHD : public Task {
   void run( Session* session, const std::string& argument );
 };
 
+
 /// Colormap Command
 class CMP : public Task {
  public:
   void run( Session* session, const std::string& argument );
 };
 
+
 /// Inversion Command
 class INV : public Task {
  public:
   void run( Session* session, const std::string& argument );
 };
+
 
 /// Zoomify Request Command
 class Zoomify : public Task {
@@ -335,6 +342,12 @@ class CTW : public Task {
   void run( Session* session, const std::string& argument );
 };
 
+
+/// Color Conversion Command
+class COL : public Task {
+ public:
+  void run( Session* session, const std::string& argument );
+};
 
 
 #endif

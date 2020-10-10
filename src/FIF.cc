@@ -29,6 +29,10 @@
 #include "KakaduImage.h"
 #endif
 
+#ifdef HAVE_OPENJPEG
+#include "OpenJPEGImage.h"
+#endif
+
 #define MAXIMAGECACHE 1000  // Max number of items in image cache
 
 
@@ -120,10 +124,18 @@ void FIF::run( Session* session, const string& src ){
       if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: TIFF image detected" << endl;
       *session->image = new TPTImage( test );
     }
-#ifdef HAVE_KAKADU
+#if defined(HAVE_KAKADU) || defined(HAVE_OPENJPEG)
     else if( format == JPEG2000 ){
-      if( session->loglevel >= 2 ) *(session->logfile) << "FIF :: JPEG2000 image detected" << endl;
+      if( session->loglevel >= 2 )
+        *(session->logfile) << "FIF :: JPEG2000 image detected" << endl;
+#if defined(HAVE_KAKADU)
       *session->image = new KakaduImage( test );
+      if( session->codecOptions["KAKADU_READMODE"] ){
+	((KakaduImage*)*session->image)->kdu_readmode = (KakaduImage::KDU_READMODE) session->codecOptions["KAKADU_READMODE"];
+      }
+#elif defined(HAVE_OPENJPEG)
+      *session->image = new OpenJPEGImage( test );
+#endif
     }
 #endif
     else throw string( "Unsupported image type: " + argument );
@@ -145,7 +157,7 @@ void FIF::run( Session* session, const string& src ){
 	  throw string( "Unsupported image type: " + imtype );
 	}
 	else{
-	  // Construct our dynamic loading image decoder 
+	  // Construct our dynamic loading image decoder
 	  session->image = new DSOImage( test );
 	  (*session->image)->Load( (*mod_it).second );
 

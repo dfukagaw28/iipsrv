@@ -1,7 +1,7 @@
 /*
     IIP FCGI server module - Main loop.
 
-    Copyright (C) 2000-2016 Ruven Pillay
+    Copyright (C) 2000-2019 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,11 +26,10 @@
 
 #include <ctime>
 #include <csignal>
-#include <iostream>
-#include <fstream>
 #include <string>
 #include <utility>
 #include <map>
+#include <algorithm>
 
 #include "TPTImage.h"
 #include "JPEGCompressor.h"
@@ -42,6 +41,8 @@
 #include "Task.h"
 #include "Environment.h"
 #include "Writer.h"
+#include "Logger.h"
+
 
 #ifdef HAVE_MEMCACHED
 #ifdef WIN32
@@ -55,6 +56,9 @@
 #include "DSOImage.h"
 #endif
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 // If necessary, define missing setenv and unsetenv functions
 #ifndef HAVE_SETENV
@@ -88,13 +92,36 @@ using namespace std;
    can have access to them
 */
 int loglevel;
-ofstream logfile;
+Logger logfile;
 unsigned long IIPcount;
 char *tz = NULL;
 
 
 
-/* Handle a signal - print out some stats and exit
+// Create pointers to our cache structures for use in our signal handler function
+imageCacheMapType* ic = NULL;
+Cache* tc = NULL;
+
+
+void IIPReloadCache( int signal )
+{
+  if( ic ) ic->clear();
+  if( tc ) tc->clear();
+
+  if( loglevel >= 1 ){
+    // No strsignal on Windows
+#ifdef WIN32
+    int sigstr = signal;
+#else
+    char *sigstr = strsignal( signal );
+#endif
+    logfile << "Caught " << sigstr << " signal. Emptying internal caches" << endl << endl;
+  }
+}
+
+
+
+/* Handle a termination signal - print out some stats and exit
  */
 void IIPSignalHandler( int signal )
 {
@@ -108,6 +135,9 @@ void IIPSignalHandler( int signal )
     time_t current_time = time( NULL );
     char *date = ctime( &current_time );
 
+    // Remove trailing newline
+    date[strcspn(date, "\n")] = '\0';
+
     // No strsignal on Windows
 #ifdef WIN32
     int sigstr = signal;
@@ -117,12 +147,12 @@ void IIPSignalHandler( int signal )
 
     logfile << endl << "Caught " << sigstr << " signal. "
 	    << "Terminating after " << IIPcount << " accesses" << endl
-	    << date
+	    << date << endl
 	    << "<----------------------------------->" << endl << endl;
     logfile.close();
   }
 
-  exit( 1 );
+  exit( 0 );
 }
 
 
@@ -155,8 +185,8 @@ int main( int argc, char *argv[] )
 
     // Check for the requested log file path
     string lf = Environment::getLogFile();
+    logfile.open( lf );
 
-    logfile.open( lf.c_str(), ios::app );
     // If we cannot open this, set the loglevel to 0
     if( !logfile ){
       loglevel = 0;
@@ -234,6 +264,7 @@ int main( int argc, char *argv[] )
   // Set our maximum image cache size
   float max_image_cache_size = Environment::getMaxImageCacheSize();
   imageCacheMapType imageCache;
+  ic = &imageCache;
 
 
   // Get our image pattern variable
@@ -274,6 +305,29 @@ int main( int argc, char *argv[] )
   string cache_control = Environment::getCacheControl();
 
 
+  // Get URI mapping if we are not using query strings
+  string uri_map_string = Environment::getURIMap();
+  map<string,string> uri_map;
+
+
+  // Get the allow upscaling setting
+  bool allow_upscaling = Environment::getAllowUpscaling();
+
+
+  // Get the ICC embedding setting
+  bool embed_icc = Environment::getEmbedICC();
+
+
+  // Create our image processing engine
+  Transform* processor = new Transform();
+
+
+#ifdef HAVE_KAKADU
+  // Get the Kakadu readmode
+  unsigned int kdu_readmode = Environment::getKduReadMode();
+#endif
+
+
   // Print out some information
   if( loglevel >= 1 ){
     logfile << "Setting maximum image cache size to " << max_image_cache_size << "MB" << endl;
@@ -289,11 +343,60 @@ int main( int argc, char *argv[] )
       if( max_layers < 0 ) logfile << "all layers" << endl;
       else logfile << max_layers << endl;
     }
+    logfile << "Setting Allow Upscaling to " << (allow_upscaling? "true" : "false") << endl;
+    logfile << "Setting ICC profile embedding to " << (embed_icc? "true" : "false") << endl;
 #ifdef HAVE_KAKADU
     logfile << "Setting up JPEG2000 support via Kakadu SDK" << endl;
+    logfile << "Setting Kakadu read-mode to " << ((kdu_readmode==2) ? "resilient" : (kdu_readmode==1) ? "fussy" : "fast") << endl;
+#elif defined(HAVE_OPENJPEG)
+    logfile << "Setting up JPEG2000 support via OpenJPEG" << endl;
+#endif
+    logfile << "Setting image processing engine to " << processor->getDescription() << endl;
+#ifdef _OPENMP
+    int num_threads = 0;
+#pragma omp parallel
+    {
+      num_threads = omp_get_num_threads();
+    }
+    if( num_threads > 1 ) logfile << "OpenMP enabled for parallelized image processing with " << num_threads << " threads" << endl;
 #endif
   }
 
+
+  // Setup our URI mapping for non-CGI requests
+  if( !uri_map_string.empty() ){
+
+    // Check map is well-formed: maps must be of the form "prefix=>protocol"
+    size_t pos;
+    if( (pos = uri_map_string.find("=>")) != string::npos ){
+
+      // Extract protocol
+      string prefix = uri_map_string.substr( 0, pos );
+      string protocol = uri_map_string.substr( pos+2 );
+      bool supported_protocol = false;
+
+      // Make sure the command is one of our supported protocols: "IIP", "IIIF", "Zoomify", "DeepZoom"
+      string prtcl = protocol;
+      transform( prtcl.begin(), prtcl.end(), prtcl.begin(), ::tolower );
+      if( prtcl == "iip" || prtcl == "iiif" || prtcl == "zoomify" || prtcl == "deepzoom" ){
+	supported_protocol = true;
+      }
+
+      if( loglevel > 0 ){
+	logfile << "Setting URI mapping to " << uri_map_string << ". "
+		<< ((supported_protocol)?"S":"Uns") << "upported protocol: " << protocol << endl;
+      }
+
+      // IIP protocol requires "FIF" as first argument
+      if( prtcl == "iip" ) prtcl = "fif";
+
+      // Initialize our map
+      if( supported_protocol ) uri_map[prefix] = prtcl;
+    }
+    else if( loglevel > 0 ) logfile << "Malformed URI map: " << uri_map_string << endl;
+
+  }
+  
 
   // Try to load our watermark
   if( watermark.getImage().length() > 0 ){
@@ -389,7 +492,7 @@ int main( int argc, char *argv[] )
 
 #ifndef WIN32
   signal( SIGUSR1, IIPSignalHandler );
-  signal( SIGHUP, IIPSignalHandler );
+  signal( SIGHUP, IIPReloadCache );
 #endif
 
   signal( SIGTERM, IIPSignalHandler );
@@ -410,6 +513,7 @@ int main( int argc, char *argv[] )
 
   // Create our tile cache
   Cache tileCache( max_image_cache_size );
+  tc = &tileCache;
   Task* task = NULL;
 
 
@@ -449,6 +553,8 @@ int main( int argc, char *argv[] )
     View view;
     if( max_CVT != -1 ) view.setMaxSize( max_CVT );
     if( max_layers != 0 ) view.setMaxLayers( max_layers );
+    view.setAllowUpscaling( allow_upscaling );
+    view.setEmbedICC( embed_icc );
 
 
 
@@ -473,17 +579,53 @@ int main( int argc, char *argv[] )
       session.out = &writer;
       session.watermark = &watermark;
       session.headers.clear();
-
-      char* header = NULL;
-
-      // Get the query into a string
-#ifdef DEBUG
-      header = argv[1];
-#else
-      header = FCGX_GetParam( "QUERY_STRING", request.envp );
+      session.processor = processor;
+#ifdef HAVE_KAKADU
+      session.codecOptions["KAKADU_READMODE"] = kdu_readmode;
 #endif
 
-      const string request_string = (header!=NULL)? header : "";
+      char* header = NULL;
+      string request_string;
+
+#ifndef DEBUG
+      // If we have a URI prefix mapping, first test for a match between the map prefix string
+      //  and the full REQUEST_URI variable
+      if( !uri_map.empty() ){
+
+	string prefix = uri_map.begin()->first;
+	string command = uri_map.begin()->second;
+
+	header = FCGX_GetParam( "REQUEST_URI", request.envp );
+	const string request_uri = (header!=NULL) ? header : "";
+
+	// Try to find the prefix at the beginning of request URI
+	// Note that the first character will always be "/"
+	size_t len = prefix.length();
+	if( (len==0) || (request_uri.find(prefix)==1) ){
+	  // This is indeed a mapped request, so map our prefix with the appropriate protocol
+	  unsigned int start = (len>0) ? len+2 : 1; // Add 2 to remove both leading and trailing slashes
+	  // Strip out any query string if we are in prefix mode
+	  size_t q = request_uri.find_first_of('?');
+	  unsigned int end = (q==string::npos) ? request_uri.length() : q;
+	  request_string = command + "=" + request_uri.substr( start, end-start );
+	  if( loglevel >= 2 ) logfile << "Request URI mapped to " << request_string << endl;
+	}
+      }
+#endif
+
+      // If the request string hasn't been set through a URI map, get it from the QUERY_STRING variable
+      if( request_string.empty() ){
+	// Get the query into a string
+#ifdef DEBUG
+	header = argv[1];
+#else
+	header = FCGX_GetParam( "QUERY_STRING", request.envp );
+#endif
+
+	request_string = (header!=NULL)? header : "";
+      }
+
+
 
       // Check that we actually have a request string
       if( request_string.empty() ){
@@ -499,6 +641,7 @@ int main( int argc, char *argv[] )
       session.headers["QUERY_STRING"] = request_string;
       session.headers["BASE_URL"] = base_url;
 
+#ifndef DEBUG
       // Get several other HTTP headers
       if( (header = FCGX_GetParam("SERVER_PROTOCOL", request.envp)) ){
         session.headers["SERVER_PROTOCOL"] = string(header);
@@ -509,8 +652,11 @@ int main( int argc, char *argv[] )
       if( (header = FCGX_GetParam("REQUEST_URI", request.envp)) ){
         session.headers["REQUEST_URI"] = string(header);
       }
-      if ( (header = FCGX_GetParam("HTTPS", request.envp)) ) {
+      if( (header = FCGX_GetParam("HTTPS", request.envp)) ) {
         session.headers["HTTPS"] = string(header);
+      }
+      if( (header = FCGX_GetParam("HTTP_X_IIIF_ID", request.envp)) ){
+        session.headers["HTTP_X_IIIF_ID"] = string(header);
       }
 
       // Check for IF_MODIFIED_SINCE
@@ -520,7 +666,7 @@ int main( int argc, char *argv[] )
 	  logfile << "HTTP Header: If-Modified-Since: " << header << endl;
 	}
       }
-
+#endif
 
 #ifdef HAVE_MEMCACHED
       // Check whether this exists in memcached, but only if we haven't had an if_modified_since
@@ -688,14 +834,16 @@ int main( int argc, char *argv[] )
       else{
 	/* Display our advertising banner ;-)
 	 */
-	writer.printf( response.getAdvert( version ).c_str() );
+	writer.printf( response.getAdvert().c_str() );
       }
 
     }
 
     // Image file errors
     catch( const file_error& error ){
-      string status = "Status: 404 Not Found\r\nServer: iipsrv/" + version + "\r\n\r\n" + error.what();
+      string status = "Status: 404 Not Found\r\nServer: iipsrv/" + version +
+	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
+	 "\r\n\r\n" + error.what();
       writer.printf( status.c_str() );
       writer.flush();
       if( loglevel >= 2 ){
@@ -706,7 +854,9 @@ int main( int argc, char *argv[] )
 
     // Parameter errors
     catch( const invalid_argument& error ){
-      string status = "Status: 400 Bad Request\r\nServer: iipsrv/" + version + "\r\n\r\n" + error.what();
+      string status = "Status: 400 Bad Request\r\nServer: iipsrv/" + version +
+	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
+	"\r\n\r\n" + error.what();
       writer.printf( status.c_str() );
       writer.flush();
       if( loglevel >= 2 ){
@@ -725,7 +875,7 @@ int main( int argc, char *argv[] )
 
       /* Display our advertising banner ;-)
        */
-      writer.printf( response.getAdvert( version ).c_str() );
+      writer.printf( response.getAdvert().c_str() );
 
     }
 

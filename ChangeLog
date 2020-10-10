@@ -1,3 +1,283 @@
+24/03/2016: Version 1.1 Released
+
+
+20/06/2019:
+	- Documentation updates for doxygen
+
+
+13/06/2019:
+	- Re-factored to display Logger output type availability at configure stage.
+	- SIGHUP signal now empties internal caches rather than terminates iipsrv.
+
+
+12/06/2019:
+	- Fix to avoid unnecessary conversion to binary when image already binary.
+	- Update to OpenJPEG code to fix problem when re-using codec structures
+	  more than once in the same request (for example when calculating histogram).
+
+
+11/06/2019:
+	- Fixes to eliminate Coverity static scan analysis warnings.
+	- New rewritten OpenJPEG module: now faster, cleaner and correctly
+	  handles ICC profiles, bilevel and 16 bit images. Now activated by
+	  default if OpenJPEG library found and Kakadu not requested.
+
+
+13/05/2019:
+	- Update to configure.ac to change AC_CHECK_FILE for Kakadu sources to
+	  AS_IF to properly enable cross builds. Patched thanks to Helmut Grohne.
+
+
+23/02/2019:
+	- Added test for resolutions that may be untiled within a tiled TIFF.
+
+
+01/04/2019:
+	- Added Logger class, which replaces the previous raw ofstream. The class
+	  includes functionality to output log to syslog on UNIX-type systems.
+	  Pass "syslog" to the LOGFILE startup environment variable to use syslog.
+	- Minor code changes for Windows MSVC compilation
+
+
+19/03/2019:
+	- Small increase in temporary buffer size in OBJ.cc colorspace() function
+	  to avoid truncation warning in GCC 8.2
+
+
+13/03/2019:
+	- Fixed bug in vertical mirroring transformation
+	- Minor change to IIIF square parsing to allow correct logging
+
+
+25/02/2019:
+	- Added check for overly large XMP sizes in JPEGCompressor.cc
+
+
+20/02/2019:
+	- Fixed rounding error in getViewWidth() / getViewHeight() which was causing
+	  certain IIIF requests to be handled by CVT rather than JTL. See:
+          https://github.com/ruven/iipsrv/issues/148#issuecomment-453125005
+	- Adding missing default initialization for kdu_readmode variable.
+
+
+15/02/2019:
+	- Changed exit code after signal handling for clean shutdown when iipsrv used
+	  with systemd.
+
+
+15/01/2019:
+	- Added "bitonal" to list of available qualities in the IIIF info.json file and
+	  replaced use of pow with a faster bitwise shift.
+
+
+09/01/2019:
+	- Added ability to do contrast stretching and histogram equalization via extensions
+	  to the CNT command (CNT=EQ and CNT=ST respectively). Also added new IIP command to
+	  enable color space conversion to greyscale or binary (aka bi-level or bitonal) via
+	  the COL command (COL=grey or COL=binary). Image histogram is calculated once when
+	  needed and saved in the image cache.
+
+
+21/12/2018:
+	- Added fix for rounding error in CVT.cc to avoid garbled last lines in region
+	  requests for very large images.
+
+
+30/11/2018:
+	- Added maxWidth and maxHeight IIIF API 2.1 directives to info.json.
+
+
+13/11/2018:
+	- Converted RawTile dataLength variable to unsigned to improve overflow
+	  avoidance as per https://github.com/ruven/iipsrv/pull/156
+	- Added Visual Studio version check to round() implementation in
+	  windows/Time.cc as now supported in recent versions.
+
+
+12/11/2018:
+	- Refactored image procesing code. Transform functions are now encapsulated
+	  within a struct to allow new processing engines to be more easily added.
+	- Cleanup to Environment.h to remove redundant comparison as readmode is
+	  declared unsigned and can never be less than 0.
+
+
+05/11/2018:
+	- Added codecOptions list to Session class for setting options for the encoders
+	  or decoders. Added KDU_READMODE environment variable for setting the Kakadu
+	  read-mode in KakaduImage.cc. Options are 0 (fast), 1 (fussy) or 2 (resilient).
+
+
+23/07/2018:
+	- Fixed incorrect big endian TIFF file signature.
+
+
+27/04/2018:
+	- Updates to Windows build files: removed Kakadu dependencies.
+	- Added version check for snprintf Windows redefinition as this is now
+	  supported in recent versions of Visual Studio.
+
+
+18/12/2017:
+	- Added missing snprintf definition for Windows in JPEGCompressor.h
+
+
+14/12/2017:
+	- Added the "max" parameter for the size section to the IIIF parser ahead of
+	  deprecation in IIIF version 3.0: http://iiif.io/api/image/2.1/#size
+	- Fixed some spelling mistakes in various files - thanks to Stefan Weil
+
+
+13/12/2017:
+	- Update to configure.ac to fix compilation with Kakadu 7.10
+
+
+28/11/2017:
+	- Modified bilinear interpolation code to avoid risk of unallocated buffer
+	  reads at edges and to use replicated pixels.
+
+
+26/11/2017:
+	- Removed exception specifications from the IIPImage and Compressor class
+	  declarations as well as from their derived classes. Dynamic exception
+	  specifications are deprecated in C++11 onwards. See for rationale and details:
+	  http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2010/n3051.html
+
+
+25/11/2017:
+	- Added missing RED, GREEN and BLUE colormap implementations to Transforms.cc
+
+
+24/11/2017:
+	- Added input validation for SPECTRA, PFL and MINMAX commands to avoid
+	  possible access to unmapped memory - thanks to John Heasman at DocuSign.
+
+
+17/11/2017:
+	- Added a check to KakaduImage.cc for zero-sized regions
+
+
+04/10/2017:
+	- Set an upper size limit to ICC profiles accepted for embedding
+
+
+04/08/2017:
+	- Increased JPEG buffer size to handle large markers such as XMP metadata.
+	- XMP metadata size now reported in CVT.cc.
+
+
+14/07/2017:
+	- Added Compressor class from which JPEGCompressor is now derived.
+	  Abstracting this will enable easier integration of PNG output.
+	  Output format now specified in View class.
+
+
+06/07/2017:
+	- Enabled CORS for error responses.
+
+
+05/07/2017:
+	- Added "Access-Control-Allow-Headers" field if CORS has been set to
+	  fix CORS Ajax problems with js libraries such as JQuery, Mootools.
+
+
+02/07/2017:
+	- Added OpenMP threading info to startup in Main.cc.
+
+
+30/06/2017:
+	- Added ICC profile embedding support in JPEGCompressor for both JTL
+	  and CVT commands using an implementation based on IJG's iccjpeg.
+	  TPTImage and KakaduImage now extract the profile into the metadata map.
+	  Added also new EMBED_ICC environment variable to allow user to disable
+	  embedding. Thanks to Dave Beaudet for initial implementation.
+	- Refactored XMP metadata handling within JPEG.
+
+
+23/06/2017:
+	- Added new OBJ metadata request for IIP protocol to return full list
+	  of existing image resolutions.
+
+
+19/06/2017:
+	- Modified URI_MAP to parse this prefix first and only if not present,
+	  to use the query string. This allows query strings to be appended for
+	  caching purposes etc.
+
+
+14/06/2017:
+	- Added URI_MAP environment variable to enable mapping of URL prefixes
+	  to specific protocol handlers without requiring web server rewriting.
+	- Added missing checkImage() function to JTL and harmonized with CVT.cc.
+
+
+12/06/2017:
+	- Added try block to avoid crashes with malformed images in older
+	  versions of Kakadu.
+
+
+05/04/2017:
+	- Fixed crash in KakaduImage.cc when zero sized images are requested
+
+
+29/03/2017:
+	- Fixed scaling factor for bilinear interpolation in Transforms.cc
+
+
+02/03/2017:
+	- Added extra conditions to JTL uncompressed tile request and slightly
+	  refactored code to fix bug when greyscale conversion requested
+
+
+08/02/2017:
+	- Extra try/catch in KakaduImage for images with missing codestreams
+
+
+29/11/2016:
+	- Another update to IIIF aspect ratio code
+
+
+28/11/2016:
+	- Update to aspect ratio code for sizes exceeding max CVT limit
+
+
+18/11/2016:
+	- Modified IIIF.cc to respect aspect ratio when only width or height size
+	  parameter is given and size exceeds server max CVT limit.
+
+
+16/10/2016:
+	- Added IIIF 2.1 square region support
+
+
+29/08/2016:
+	- Fix to bug in rotation code for 270 degs introduced when parallelization added.
+	- Added test for pkg-config to configure.ac script.
+
+
+10/08/2016:
+	- Update to configure.ac script for OpenJPEG
+
+
+04/08/2016:
+	- Fix to info.json code in IIIF.cc to avoid problems with images containing only
+	  one resolution level.
+	- Fixed bug in filter_contrast() due to incorrectly calculated buffer size.
+
+
+08/07/2016:
+	- Removed "gray" from IIIF list of supported features - already specified in the
+	  qualities list.
+
+
+07/06/2016:
+	- Added fix for API change in get_colour_mapping() function in Kakadu version 7.8
+
+
+02/06/2016:
+	- Type change of counter in filter_contrast to long to avoid overflows with large
+	  image exports.
+
+
 22/03/2016: Version 1.0 Released
 
 
@@ -789,7 +1069,7 @@
 
 
 06/06/2008:
-	- Modifed the way the image dimensions are stored in the IIPImage class.
+	- Modified the way the image dimensions are stored in the IIPImage class.
 	  Rather than simply storing the max size, a vector of available dimensions
 	  is saved making it easier to get the size for a given resolution.
 

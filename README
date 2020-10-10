@@ -25,7 +25,7 @@ FEATURES
 * Multispectral image support
 * Dynamic watermarking
 * Memcached support
-* 3D panoramic views 
+* 3D panoramic views
 * Dynamic hillshading of 3D surface topologies
 * Dynamic decoder module capability
 
@@ -57,15 +57,15 @@ See COPYING.FCGI for licensing information for these libraries.
 REQUIREMENTS
 ------------
 Requirements: libtiff, zlib and the IJG JPEG development libraries.
-Optional: libmemcached (for Memcached) and Kakadu (for JPEG2000)
+Optional: libmemcached (for Memcached) and Kakadu or OpenJPEG (for JPEG2000).
 
 Plus, of course, an fcgi-enabled web server. The server has been successfully
 tested on the following servers:
-- Apache (http://httpd.apache.org),
-- Lighttpd (http://www.lighttpd.net)
-- IIS (http://www.iis.net)
-- NginX (http://www.nginx.org)
-- MyServer (http://www.myserverproject.net)
+- [Apache](https://httpd.apache.org)
+- [Lighttpd](https://www.lighttpd.net)
+- [IIS](https://www.iis.net)
+- [NginX](https://nginx.org)
+- [MyServer](http://www.myserverproject.net)
 - Java Application Servers (Tomcat, JBoss)
 
 Example server configurations are shown below.
@@ -106,12 +106,25 @@ during the build process.
 OPTIONAL LIBRARIES: KAKADU
 --------------------------
 IIPImage is able to decode JPEG2000 images via the Kakadu SDK
-(http://www.kakadusoftware.com). This is, however, not open source and will
+(http://www.kakadusoftware.com). This is, however, not open source and you will
 need to purchase a license for the source code. In order to use, first build
-the Kakadu SDK as per the instructions supplied with the SDK. Then, the
+the Kakadu SDK as per the instructions supplied with the SDK. Then, supply the
 following parameters to the ./configure command
 
     --with-kakadu=/path/to/kakadu/distribution
+
+
+
+OPTIONAL LIBRARIES: OPENJPEG
+----------------------------
+
+IIPImage is able to decode JPEG2000 images via the open source OpenJPEG 
+library (http://www.openjpeg.org/). Activated if OpenJPEG development
+files found in system path or path provided via
+
+    --enable-openjpeg=/path/to/openjpeg/distribution
+
+OpenJPEG will be disabled if Kakadu support has been requested or --disable-openjpeg used.
 
 
 
@@ -130,6 +143,8 @@ There are several startup variables that can be passed to the server.
 They are all optional.
 
 LOGFILE: the server will log its output to the file specified, if it can.
+Version 1.1 and later of iipsrv also supports logging to syslog if “syslog”
+is given as the value.
 
 VERBOSITY: 0 means no logging, 1 is minimal logging, 2 lots of debugging stuff,
 3 even more debugging stuff and 10 a very large amount indeed ;-)
@@ -153,6 +168,10 @@ MAX_CVT: Limits the maximum image dimensions in pixels (the WID or HEI
 commands) allowable for dynamic JPEG export via the CVT command. This 
 prevents huge requests from overloading the server. The default is 5000.
 
+ALLOW_UPSCALING: Determines whether an image may be rendered at a size greater
+than that of the source image. A value of 0 will prevent upscaling.
+The default is 1 (upscaling is allowed).
+
 MAX_LAYERS: The maximum number of quality layers to decode for images that support 
 progressive quality encoding, such as JPEG2000. Ignored for other file 
 formats. If not set, half of the available quality layers will be decoded by default.
@@ -168,7 +187,7 @@ cropped to the tile size. If smaller, the watermark will be positioned
 randomly within the available space. The image can be either colour or 
 grayscale.
 
-WATERMARK_PROBABILITY: The probability that a particilar tile will have a watermark
+WATERMARK_PROBABILITY: The probability that a particular tile will have a watermark
 applied to it. 0 means never, 1 means always.
 
 WATERMARK_OPACITY: The opacity (between 0 and 1) applied to the watermark image.
@@ -190,8 +209,24 @@ See http://www.w3.org/TR/cors/ for more details on CORS.
 BASE_URL: Set a base URL for use in certain protocol requests if web server rewriting 
 has taken place and the public URL is not the same as that supplied to iipsrv.
 
+URI_MAP: Set a mapping from a URL prefix to a supported protocol. This enables iipsrv to
+be able to work without requring full CGI query strings. Map must be of the form
+"prefix=>protocol" where prefix can be either empty or any string prefix and protocol must
+be one of IIP,IIIF,DeepZoom, Zoomify. Used, for example, to map requests of the form
+http://server/iiif/ to the IIIF protocol handler without requiring web server rewriting.
+
 CACHE_CONTROL: Set the HTTP Cache-Control header. See http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.9 for 
 a full list of options. If not set, header defaults to "max-age=86400" (24 hours).
+
+EMBED_ICC: Set whether the ICC profile is embedded within the output image.
+0 to strip profile, 1 to embed profile. The default is 1 (embedded profiles).
+
+OMP_NUM_THREADS: Set the number of OpenMP threads to be used by the iipsrv image
+processing routines (See OpenMP specification for details). All available processor
+threads are used by default.
+
+KAKADU_READMODE: Set the Kakadu JPEG2000 read-mode. 0 for 'fast' mode with minimal error checking (default), 1 for 'fussy' mode with no error 
+recovery, 2 for 'resilient' mode with maximum recovery from codestream errors. See the Kakadu documentation for further details.
 
 DECODER_MODULES: Comma separated list of external modules for decoding 
 other image formats. This is only necessary if you have activated 
@@ -249,7 +284,9 @@ FastCgiServer /usr/local/httpd/fcgi-bin/iipsrv.fcgi \
 -initial-env MAX_IMAGE_CACHE_SIZE=10 \
 -initial-env FILENAME_PATTERN=_pyr_ \
 -initial-env JPEG_QUALITY=50 \
--initial-env MAX_CVT=3000
+-initial-env MAX_CVT=3000 \
+-listen-queue-depth 2048 \
+-processes 1
 --------------------------------------------------------------------
 ```
 
@@ -457,4 +494,4 @@ For example with lighttpd:
 Please refer to the project site http://iipimage.sourceforge.net for further details
 
 ------------------------------------------------------------------------------------
-(c) 2000-2016 Ruven Pillay <ruven@users.sourceforge.net>
+(c) 2000-2019 Ruven Pillay <ruven@users.sourceforge.net>
