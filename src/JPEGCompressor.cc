@@ -26,6 +26,12 @@
 using namespace std;
 
 
+// Define round() function for older MSVC compilers
+#if defined _MSC_VER && _MSC_VER<1900
+inline double round(double r) { return (r > 0.0) ? floor(r + 0.5) : ceil(r - 0.5); }
+#endif
+
+
 // Minimum buffer size for output data
 #define MX 65536
 
@@ -301,12 +307,17 @@ unsigned int JPEGCompressor::Finish( unsigned char* output )
   // Need to set the scanline to the end for jpeg_finish_compress() to work
   cinfo.next_scanline = dest->strip_height;
 
-  // Close and destroy our structure
+  // Terminate the compression
   jpeg_finish_compress( &cinfo );
+
+  // Calculate size of final data to be written before destroying our compression structures
+  unsigned long dataLength = dest->source_size - dest->pub.free_in_buffer;
+
+  // Destroy our compression structure
   jpeg_destroy_compress( &cinfo );
 
   // Return number of bytes written
-  return ( dest->source_size - dest->pub.free_in_buffer );
+  return ( dataLength );
 }
 
 

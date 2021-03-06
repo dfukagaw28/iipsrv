@@ -1,3 +1,22 @@
+04/03/2021:
+	- Minor logging changes to TileManager class to allow improve logging with very detailed logging now moved into
+	  higher loglevel.
+
+
+01/03/2012:
+	- Modified JPEGCompressor::Finish() class to calculate data size before destroying compression structure.
+	  Avoids complaints when using address-sanitizer compliation flag.
+
+
+13/02/2021:
+	- Added logarithm transform processing to Transform.cc using the formula: out = c*log(1+in).
+	  Log transform can be requested by setting the gamma request to GAM=log or GAM=logarithm.
+
+
+03/02/2021:
+	- Added round() definition to JPEGCompressor.cc to allow MSVC compilation: https://github.com/ruven/iipsrv/issues/205
+
+
 27/06/2020:
 	- Trailing query suffixes using the ? character are now stripped off the IIIF quality/format string.
 	  Fixes: https://github.com/ruven/iipsrv/issues/145
