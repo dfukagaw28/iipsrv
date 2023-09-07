@@ -1,7 +1,7 @@
 /*
     IIP FCGI server module - Main loop.
 
-    Copyright (C) 2000-2019 Ruven Pillay
+    Copyright (C) 2000-2022 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,7 +22,6 @@
 
 
 
-#include <fcgiapp.h>
 
 #include <ctime>
 #include <csignal>
@@ -32,7 +31,6 @@
 #include <algorithm>
 
 #include "TPTImage.h"
-#include "JPEGCompressor.h"
 #include "Tokenizer.h"
 #include "IIPResponse.h"
 #include "View.h"
@@ -42,14 +40,16 @@
 #include "Environment.h"
 #include "Writer.h"
 #include "Logger.h"
-
+#ifdef HAVE_KAKADU
+#include "KakaduImage.h"
+#endif
 
 #ifdef HAVE_MEMCACHED
-#ifdef WIN32
-#include "../windows/MemcachedWindows.h"
-#else
+//#ifdef WIN32
+//#include "../windows/MemcachedWindows.h"
+//#else
 #include "Memcached.h"
-#endif
+//#endif
 #endif
 
 #ifdef ENABLE_DL
@@ -94,7 +94,6 @@ using namespace std;
 int loglevel;
 Logger logfile;
 unsigned long IIPcount;
-char *tz = NULL;
 
 
 
@@ -113,7 +112,7 @@ void IIPReloadCache( int signal )
 #ifdef WIN32
     int sigstr = signal;
 #else
-    char *sigstr = strsignal( signal );
+    const char *sigstr = strsignal( signal );
 #endif
     logfile << "Caught " << sigstr << " signal. Emptying internal caches" << endl << endl;
   }
@@ -127,11 +126,6 @@ void IIPSignalHandler( int signal )
 {
   if( loglevel >= 1 ){
 
-    // Reset our time zone environment
-    if(tz) setenv("TZ", tz, 1);
-    else unsetenv("TZ");
-    tzset();
-
     time_t current_time = time( NULL );
     char *date = ctime( &current_time );
 
@@ -142,7 +136,7 @@ void IIPSignalHandler( int signal )
 #ifdef WIN32
     int sigstr = signal;
 #else
-    char *sigstr = strsignal( signal );
+    const char *sigstr = strsignal( signal );
 #endif
 
     logfile << endl << "Caught " << sigstr << " signal. "
@@ -197,7 +191,7 @@ int main( int argc, char *argv[] )
 
       // Get current time
       time_t current_time = time( NULL );
-      char *date = ctime( &current_time );
+      const char *date = ctime( &current_time );
 
       logfile << "<----------------------------------->" << endl
 	      << date << endl
@@ -209,15 +203,8 @@ int main( int argc, char *argv[] )
   }
 
 
-  // Set our environment to UTC as all file modification times are GMT,
-  // but save our current state to allow us to reset before quitting
-  tz = getenv("TZ");
-  setenv("TZ","",1);
-  tzset();
 
-
-
-  // Set up some FCGI items and make sure we are in FCGI mode
+  // Set up our FCGI connnection
 
 #ifndef DEBUG
 
@@ -225,6 +212,12 @@ int main( int argc, char *argv[] )
   int listen_socket = 0;
   bool standalone = false;
 
+
+  // Initialize FCGI library
+  if( FCGX_Init() ) return( 1 );
+
+
+  // Check if we're running directly from the command line
   if( argv[1] && (string(argv[1]) == "--bind") ){
     string socket = argv[2];
     if( !socket.length() ){
@@ -245,9 +238,12 @@ int main( int argc, char *argv[] )
     logfile << "Running in standalone mode on socket: " << socket << " with backlog: " << backlog << endl << endl;
   }
 
-  if( FCGX_InitRequest( &request, listen_socket, 0 ) ) return(1);
 
-  // Check whether we are really in FCGI mode - only if we are not in standalone mode
+  // Initialize FCGI request
+  if( FCGX_InitRequest( &request, listen_socket, 0 ) ) return( 1 );
+
+
+  // Check whether we really are in FCGI mode - only if we are not in standalone mode
   if( FCGX_IsCGI() ){
     if( !standalone ){
       if( loglevel >= 1 ) logfile << "CGI-only mode detected" << endl << endl;
@@ -275,6 +271,14 @@ int main( int argc, char *argv[] )
   int jpeg_quality = Environment::getJPEGQuality();
 
 
+  // Get our default PNG compression level
+  int png_quality = Environment::getPNGQuality();
+
+
+  // Get our default WebP compression level
+  int webp_quality = Environment::getWebPQuality();
+
+
   // Get our max CVT size
   int max_CVT = Environment::getMaxCVT();
 
@@ -285,6 +289,10 @@ int main( int argc, char *argv[] )
 
   // Get the filesystem prefix if any
   string filesystem_prefix = Environment::getFileSystemPrefix();
+
+
+  // Get the filesystem suffix if any
+  string filesystem_suffix = Environment::getFileSystemSuffix();
 
 
   // Set up our watermark object
@@ -318,24 +326,44 @@ int main( int argc, char *argv[] )
   bool embed_icc = Environment::getEmbedICC();
 
 
-  // Create our image processing engine
-  Transform* processor = new Transform();
+  // Set our IIIF version
+  unsigned int iiif_version = Environment::getIIIFVersion();
 
+
+  // Create our image processing engine
+  Transform processor;
+
+
+  // Setup codec logging only once for TIFF and Kakadu
+  // Note that OpenJPEG requires codec to be initialized before setting logging functions, so cannot do statically here
+  if( loglevel > 2 ) IIPImage::logging = true;
+  TPTImage::setupLogging();
 
 #ifdef HAVE_KAKADU
   // Get the Kakadu readmode
   unsigned int kdu_readmode = Environment::getKduReadMode();
+  // Setup codec logging
+  KakaduImage::setupLogging();
 #endif
+
 
 
   // Print out some information
   if( loglevel >= 1 ){
     logfile << "Setting maximum image cache size to " << max_image_cache_size << "MB" << endl;
     logfile << "Setting filesystem prefix to '" << filesystem_prefix << "'" << endl;
+    logfile << "Setting filesystem suffix to '" << filesystem_suffix << "'" << endl;
     logfile << "Setting default JPEG quality to " << jpeg_quality << endl;
+#ifdef HAVE_PNG
+    logfile << "Setting default PNG compression level to " << png_quality << endl;
+#endif
+#ifdef HAVE_WEBP
+    logfile << "Setting default WebP compression level to " << webp_quality << endl;
+#endif
     logfile << "Setting maximum CVT size to " << max_CVT << endl;
     logfile << "Setting HTTP Cache-Control header to '" << cache_control << "'" << endl;
     logfile << "Setting 3D file sequence name pattern to '" << filename_pattern << "'" << endl;
+    logfile << "Setting default IIIF Image API version to " << iiif_version << endl;
     if( !cors.empty() ) logfile << "Setting Cross Origin Resource Sharing to '" << cors << "'" << endl;
     if( !base_url.empty() ) logfile << "Setting base URL to '" << base_url << "'" << endl;
     if( max_layers != 0 ){
@@ -351,7 +379,7 @@ int main( int argc, char *argv[] )
 #elif defined(HAVE_OPENJPEG)
     logfile << "Setting up JPEG2000 support via OpenJPEG" << endl;
 #endif
-    logfile << "Setting image processing engine to " << processor->getDescription() << endl;
+    logfile << "Setting image processing engine to " << processor.getDescription() << endl;
 #ifdef _OPENMP
     int num_threads = 0;
 #pragma omp parallel
@@ -547,11 +575,17 @@ int main( int argc, char *argv[] )
     //  so that we can close the image on exceptions
     IIPImage *image = NULL;
     JPEGCompressor jpeg( jpeg_quality );
+#ifdef HAVE_PNG
+    PNGCompressor png( png_quality );
+#endif
+#ifdef HAVE_WEBP
+    WebPCompressor webp( webp_quality );
+#endif
 
 
     // View object for use with the CVT command etc
     View view;
-    if( max_CVT != -1 ) view.setMaxSize( max_CVT );
+    if( max_CVT != 0 ) view.setMaxSize( max_CVT );
     if( max_layers != 0 ) view.setMaxLayers( max_layers );
     view.setAllowUpscaling( allow_upscaling );
     view.setEmbedICC( embed_icc );
@@ -572,6 +606,12 @@ int main( int argc, char *argv[] )
       session.response = &response;
       session.view = &view;
       session.jpeg = &jpeg;
+#ifdef HAVE_PNG
+      session.png = &png;
+#endif
+#ifdef HAVE_WEBP
+      session.webp = &webp;
+#endif
       session.loglevel = loglevel;
       session.logfile = &logfile;
       session.imageCache = &imageCache;
@@ -579,7 +619,8 @@ int main( int argc, char *argv[] )
       session.out = &writer;
       session.watermark = &watermark;
       session.headers.clear();
-      session.processor = processor;
+      session.processor = &processor;
+      session.codecOptions["IIIF_VERSION"] = iiif_version;
 #ifdef HAVE_KAKADU
       session.codecOptions["KAKADU_READMODE"] = kdu_readmode;
 #endif
@@ -615,6 +656,7 @@ int main( int argc, char *argv[] )
 
       // If the request string hasn't been set through a URI map, get it from the QUERY_STRING variable
       if( request_string.empty() ){
+
 	// Get the query into a string
 #ifdef DEBUG
 	header = argv[1];
@@ -623,12 +665,35 @@ int main( int argc, char *argv[] )
 #endif
 
 	request_string = (header!=NULL)? header : "";
+
+	header = FCGX_GetParam( "REQUEST_METHOD", request.envp );
+	session.headers["REQUEST_METHOD"] = header;
+
+	// Handle OPTIONS request
+	if( session.headers["REQUEST_METHOD"] == "OPTIONS" ){
+	  if( loglevel >=2 ) logfile << "HTTP OPTIONS request" << endl;
+	  throw( 204 );
+	}
+
+	// Check for requests sent using POST, PUT or other HTTP methods
+	if( request_string.empty() ){
+	  int contentLength = 0;
+	  if( ( header = FCGX_GetParam("CONTENT_LENGTH",request.envp) ) ) contentLength = atoi( header );
+	  if( loglevel >=2 ) logfile << "HTTP " << session.headers["REQUEST_METHOD"] << " request with contentLength " << contentLength << endl;
+	  if( contentLength > 0 ){
+	    char *contentBuffer = new char[contentLength];
+	    FCGX_GetStr( contentBuffer, contentLength, request.in );
+	    request_string = string( contentBuffer, contentLength );
+	    delete[] contentBuffer;
+	  }
+	  else request_string = "";
+	}
       }
 
 
-
-      // Check that we actually have a request string
+      // Check that we actually have a request string. If not, just show server home page
       if( request_string.empty() ){
+	response.setStatus( "200 OK" );
 	throw string( "QUERY_STRING not set" );
       }
 
@@ -654,6 +719,9 @@ int main( int argc, char *argv[] )
       }
       if( (header = FCGX_GetParam("HTTPS", request.envp)) ) {
         session.headers["HTTPS"] = string(header);
+      }
+      if( (header = FCGX_GetParam("HTTP_ACCEPT", request.envp)) ){
+	session.headers["HTTP_ACCEPT"] = string(header);
       }
       if( (header = FCGX_GetParam("HTTP_X_IIIF_ID", request.envp)) ){
         session.headers["HTTP_X_IIIF_ID"] = string(header);
@@ -752,7 +820,7 @@ int main( int argc, char *argv[] )
 	    response.formatResponse() <<
 	    endl << "---" << endl;
 	}
-	if( writer.printf( response.formatResponse().c_str() ) == -1 ){
+	if( writer.putS( response.formatResponse().c_str() ) == -1 ){
 	  if( loglevel >= 1 ) logfile << "Error sending IIPResponse" << endl;
 	}
       }
@@ -765,7 +833,7 @@ int main( int argc, char *argv[] )
       ////////////////////////////////////////////////////////
 
 #ifdef HAVE_MEMCACHED
-      if( memcached.connected() ){
+      if( response.cachable() && memcached.connected() ){
 	Timer memcached_timer;
 	memcached_timer.start();
 	memcached.store( session.headers["QUERY_STRING"], writer.buffer, writer.sz );
@@ -793,10 +861,21 @@ int main( int argc, char *argv[] )
 
         case 304:
 	  status = "Status: 304 Not Modified\r\nServer: iipsrv/" + version + "\r\n\r\n";
-	  writer.printf( status.c_str() );
+	  writer.putS( status.c_str() );
 	  writer.flush();
           if( loglevel >= 2 ){
 	    logfile << "Sending HTTP 304 Not Modified" << endl;
+	  }
+	  break;
+
+        case 204:
+	  // Handle HTTP OPTIONS requests
+	  status = "Status: 204 No Content\r\nServer: iipsrv/" + version + "\r\nX-Powered-By: IIPImage\r\n" +
+	    "Content-Length: 0\r\n" + response.getCORS() + "\r\n\r\n";
+	  writer.putS( status.c_str() );
+	  writer.flush();
+	  if( loglevel >= 2 ){
+	    logfile << "Returning HTTP 204 No Content" << endl;
 	  }
 	  break;
 
@@ -827,14 +906,15 @@ int main( int argc, char *argv[] )
 	    response.formatResponse() <<
 	    endl << "---" << endl;
 	}
-	if( writer.printf( response.formatResponse().c_str() ) == -1 ){
+	if( writer.putS( response.formatResponse().c_str() ) == -1 ){
 	  if( loglevel >= 1 ) logfile << "Error sending IIPResponse" << endl;
 	}
       }
       else{
-	/* Display our advertising banner ;-)
-	 */
-	writer.printf( response.getAdvert().c_str() );
+	// Display our advertising banner ;-)
+	if( writer.putS( response.getAdvert().c_str() ) == -1 ){
+	  if( loglevel >= 1 ) logfile << "Error sending IIPImage banner" << endl;
+	}
       }
 
     }
@@ -842,9 +922,10 @@ int main( int argc, char *argv[] )
     // Image file errors
     catch( const file_error& error ){
       string status = "Status: 404 Not Found\r\nServer: iipsrv/" + version +
+	"\r\nContent-Type: text/plain; charset=utf-8" +
 	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
-	 "\r\n\r\n" + error.what();
-      writer.printf( status.c_str() );
+	"\r\n\r\n" + error.what();
+      writer.putS( status.c_str() );
       writer.flush();
       if( loglevel >= 2 ){
 	logfile << error.what() << endl;
@@ -855,13 +936,29 @@ int main( int argc, char *argv[] )
     // Parameter errors
     catch( const invalid_argument& error ){
       string status = "Status: 400 Bad Request\r\nServer: iipsrv/" + version +
+	"\r\nContent-Type: text/plain; charset=utf-8" +
 	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
 	"\r\n\r\n" + error.what();
-      writer.printf( status.c_str() );
+      writer.putS( status.c_str() );
       writer.flush();
       if( loglevel >= 2 ){
 	logfile << error.what() << endl;
 	logfile << "Sending HTTP 400 Bad Request" << endl;
+      }
+    }
+
+    // Memory allocation errors through std::bad_alloc
+    catch( const bad_alloc& error ){
+      string message = "Unable to allocate memory";
+      string status = "Status: 500 Internal Server Error\r\nServer: iipsrv/" + version +
+	"\r\nContent-Type: text/plain; charset=utf-8" +
+	(response.getCORS().length() ? "\r\n" + response.getCORS() : "") +
+	"\r\n\r\n" + message;
+      writer.putS( status.c_str() );
+      writer.flush();
+      if( loglevel >= 1 ){
+	logfile << "Error: " << message << endl;
+	logfile << "Sending HTTP 500 Internal Server Error" << endl;
       }
     }
 
@@ -875,7 +972,7 @@ int main( int argc, char *argv[] )
 
       /* Display our advertising banner ;-)
        */
-      writer.printf( response.getAdvert().c_str() );
+      writer.putS( response.getAdvert().c_str() );
 
     }
 
@@ -913,6 +1010,14 @@ int main( int argc, char *argv[] )
     ///////// End of FCGI_ACCEPT while loop or for loop in debug mode //////////
   }
 
+
+  // Avoid dangling global pointers
+  ic = NULL;
+  tc = NULL;
+
+
+  // Close our FCGI connection
+  FCGX_Finish_r( &request );
 
 
   if( loglevel >= 1 ){

@@ -1,6 +1,6 @@
 /*  IIPImage Server: OpenJPEG JPEG2000 handler
 
-    Copyright (C) 2019 Ruven Pillay.
+    Copyright (C) 2019-2023 Ruven Pillay.
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,13 +19,23 @@
 //#define DEBUG 1
 
 #include "OpenJPEGImage.h"
+#include "Logger.h"
 #include <sstream>
-#include <fstream>
 #include <cmath>
+#ifdef DEBUG
 #include "Timer.h"
+#endif
+
+// Detect High Throughput JPEG2000
+#define J2K_CCP_CBLKSTY_HT 0x40
+#define J2K_CCP_CBLKSTY_HTMIXED 0x80
 
 
 using namespace std;
+
+
+// Reference our logging object
+extern Logger logfile;
 
 
 // Handle info, warning and error messages from OpenJPEG
@@ -37,10 +47,10 @@ static void error_callback( const char* msg, void* ){
 
 #ifdef DEBUG
 static void warning_callback( const char* msg, void* ){
-  logfile << "OpenJPEG warning :: " << msg << endl;
+  if( IIPImage::logging ) logfile << "OpenJPEG warning :: " << msg << endl;
 }
 static void info_callback( const char* msg, void* ){
-  logfile << "OpenJPEG info :: " << msg;
+  if( IIPImage::logging ) logfile << "OpenJPEG info :: " << msg;
 }
 #endif
 
@@ -56,7 +66,7 @@ void OpenJPEGImage::openImage()
   // Create decompression codec
   _codec = opj_create_decompress( OPJ_CODEC_JP2 );
 
-  // Set info, warning and error handlers for codec
+  // Set info, warning and error handlers for codec - these need to be done after codec initialization
 #ifdef DEBUG
   opj_set_info_handler( _codec, info_callback, NULL );
   opj_set_warning_handler( _codec, warning_callback, NULL );
@@ -145,6 +155,16 @@ void OpenJPEGImage::loadImageInfo( int seq, int ang )
   numResolutions = cst_info->m_default_tile_info.tccp_info[0].numresolutions;
   quality_layers = cst_info->m_default_tile_info.numlayers;
 
+
+  // High Throughput JPEG2000
+#if defined(DEBUG) && defined(J2K_CCP_CBLKSTY_HT)
+  if( (cst_info->m_default_tile_info.tccp_info[0].cblksty & J2K_CCP_CBLKSTY_HT) != 0 ||
+      (cst_info->m_default_tile_info.tccp_info[0].cblksty & J2K_CCP_CBLKSTY_HTMIXED) != 0 ){
+    logfile << "OpenJPEG :: HTJ2K codestream" << endl;
+  }
+#endif
+
+
   // Close our info structure
   opj_destroy_cstr_info( &cst_info );
 
@@ -152,6 +172,10 @@ void OpenJPEGImage::loadImageInfo( int seq, int ang )
   channels = _image->numcomps;
   bpc = _image->comps[0].prec;
 
+
+  // Empty any existing list of available resolution sizes
+  image_widths.clear();
+  image_heights.clear();
 
   // Save first resolution level
   unsigned int w = _image->x1 - _image->x0;
@@ -183,7 +207,7 @@ void OpenJPEGImage::loadImageInfo( int seq, int ang )
   unsigned int n = 1;
   w = image_widths[0];
   h = image_heights[0];
-  while( (w>tile_width) || (h>tile_height) ){
+  while( (w>tile_widths[0]) || (h>tile_heights[0]) ){
     n++;
     w = floor( w/2.0 );
     h = floor( h/2.0 );
@@ -199,9 +223,8 @@ void OpenJPEGImage::loadImageInfo( int seq, int ang )
 	    << n-numResolutions << " extra levels dynamically -" << endl
 	    << "OpenJPEG :: However, you are advised to regenerate the file with at least " << n << " levels" << endl;
 #endif
+    virtual_levels = n-numResolutions;
   }
-
-  if( n > numResolutions ) virtual_levels = n-numResolutions-1;
   numResolutions = n;
 
 
@@ -284,18 +307,18 @@ RawTile OpenJPEGImage::getTile( int seq, int ang, unsigned int res, int layers, 
     throw file_error( tile_no.str() );
   }
 
-  int vipsres = (numResolutions - 1) - res;
+  int vipsres = getNativeResolution( res );
 
-  unsigned int tw = tile_width;
-  unsigned int th = tile_height;
+  unsigned int tw = tile_widths[0];
+  unsigned int th = tile_heights[0];
   
   // Get the width and height for last row and column tiles
-  unsigned int rem_x = image_widths[vipsres] % tile_width;
-  unsigned int rem_y = image_heights[vipsres] % tile_height;
+  unsigned int rem_x = image_widths[vipsres] % tile_widths[0];
+  unsigned int rem_y = image_heights[vipsres] % tile_heights[0];
 
   // Calculate the number of tiles in each direction
-  unsigned int ntlx = (image_widths[vipsres] / tile_width) + (rem_x == 0 ? 0 : 1);
-  unsigned int ntly = (image_heights[vipsres] / tile_height) + (rem_y == 0 ? 0 : 1);
+  unsigned int ntlx = (image_widths[vipsres] / tile_widths[0]) + (rem_x == 0 ? 0 : 1);
+  unsigned int ntly = (image_heights[vipsres] / tile_heights[0]) + (rem_y == 0 ? 0 : 1);
 
   // Check whether requested tile exists
   if( tile >= ntlx*ntly ){
@@ -315,23 +338,21 @@ RawTile OpenJPEGImage::getTile( int seq, int ang, unsigned int res, int layers, 
   }
 
   // Calculate the pixel offsets for this tile
-  int xoffset = (tile % ntlx) * tile_width;
-  int yoffset = (unsigned int) floor((double)(tile/ntlx)) * tile_height;
+  int xoffset = (tile % ntlx) * tile_widths[0];
+  int yoffset = (unsigned int) floor((double)(tile/ntlx)) * tile_heights[0];
   
 #ifdef DEBUG
   logfile << "OpenJPEG :: Tile size: " << tw << "x" << th << " @" << channels << endl;
 #endif
 
+  // OpenJPEG only supports 8 or 16 bit images
+  if( !( (obpc == 8) || (obpc == 16) ) ) throw file_error( "OpenJPEG :: Unsupported number of bits" );
+
   // Create our Rawtile object and initialize with data
   RawTile rawtile( tile, res, seq, ang, tw, th, channels, obpc );
-
-  if( obpc == 16 ) rawtile.data = new unsigned short[tw*th*channels];
-  else if( obpc == 8 ) rawtile.data = new unsigned char[tw*th*channels];
-  else throw file_error( "OpenJPEG :: Unsupported number of bits" );
-
-  rawtile.dataLength = tw*th*channels*(obpc/8);
   rawtile.filename = getImagePath();
   rawtile.timestamp = timestamp;
+  rawtile.allocate();
 
   // Process the tile
   process( res, layers, xoffset, yoffset, tw, th, rawtile.data );
@@ -358,15 +379,13 @@ RawTile OpenJPEGImage::getRegion( int ha, int va, unsigned int res, int layers, 
   timer.start();
 #endif
 
+  // OpenJPEG only supports 8 or 16 bit images
+  if( !( (obpc == 8) || (obpc == 16) ) ) throw file_error( "OpenJPEG :: Unsupported number of bits" );
+
   RawTile rawtile( 0, res, ha, va, w, h, channels, obpc );
-
-  if( obpc == 16 ) rawtile.data = new unsigned short[w * h * channels];
-  else if( obpc == 8 ) rawtile.data = new unsigned char[w * h * channels];
-  else throw file_error( "OpenJPEG :: Unsupported number of bits" );
-
-  rawtile.dataLength = w*h*channels*(obpc/8);
   rawtile.filename = getImagePath();
   rawtile.timestamp = timestamp;
+  rawtile.allocate();
 
   process( res, layers, x, y, w, h, rawtile.data );
 
@@ -441,9 +460,9 @@ void OpenJPEGImage::process( unsigned int res, int layers, int xoffset, int yoff
 
 #ifdef DEBUG
   logfile << "OpenJPEG :: decoding " << layers << " quality layers" << endl;
-  logfile << "OpenJPEG :: requested region on high resolution canvas: position: "
+  logfile << "OpenJPEG :: requested region at requested resolution: position: "
 	  << xoffset << "x" << yoffset << ". size: " << tw << "x" << th << endl;
-  logfile << "OpenJPEG :: mapped resolution region size: " << (tw<<vipsres) << "x" << (th<<vipsres) << endl;
+  logfile << "OpenJPEG :: region size mapped to full resolution: " << (tw<<vipsres) << "x" << (th<<vipsres) << endl;
 #endif
 
 
@@ -457,7 +476,6 @@ void OpenJPEGImage::process( unsigned int res, int layers, int xoffset, int yoff
     throw file_error( "OpenJPEG :: process() :: opj_decode() failed" );
   }
 
-
   // Extract any ICC profile - unfortunately, can only get ICC profile after decoding
   int icc_length = _image->icc_profile_len;
   const char* icc = (const char*) _image->icc_profile_buf;
@@ -468,29 +486,27 @@ void OpenJPEGImage::process( unsigned int res, int layers, int xoffset, int yoff
   }
 #endif
 
-
   // Copy our decoded data by looping over all pixels
-  unsigned int n = 0;
-  unsigned int nk = 0;
+  size_t n = 0;
 
   for( unsigned int j=0; j < th; j += factor ){
     for( unsigned int i = 0; i < tw; i += factor ){
+      size_t index = tw*j + i;
       for( unsigned int k = 0; k < channels; k++ ){
         // Handle 16 and 8 bit data:
 	// OpenJPEG's output data is 32 bit unsigned int, so just mask of the bottom 2 bytes
 	// for 16 bit output or bottom 1 byte for 8 bit
 	if( obpc == 16 ){
-	  ((unsigned short*)d)[nk++] =(  (_image->comps[k].data[n]) & 0x0000ffff );
+	  ((unsigned short*)d)[n++] =(  (_image->comps[k].data[index]) & 0x0000ffff );
 	}
 	// Binary (bi-level) images need to be scaled up to 8 bits
 	else if( bpc == 1 ){
-	  ((unsigned char*)d)[nk++] = ((_image->comps[k].data[n]) & 0x000000f) * 255;
+	  ((unsigned char*)d)[n++] = ((_image->comps[k].data[index]) & 0x000000f) * 255;
 	}
 	else{
-	  ((unsigned char*)d)[nk++] = (_image->comps[k].data[n]) & 0x000000ff;
+	  ((unsigned char*)d)[n++] = (_image->comps[k].data[index]) & 0x000000ff;
 	}
       }
-      n++;
     }
   }
 

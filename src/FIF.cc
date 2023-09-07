@@ -1,7 +1,7 @@
 /*
     IIP FIF Command Handler Class Member Function
 
-    Copyright (C) 2006-2015 Ruven Pillay.
+    Copyright (C) 2006-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -71,6 +71,7 @@ void FIF::run( Session* session, const string& src ){
 
   // Get our image pattern variable
   string filesystem_prefix = Environment::getFileSystemPrefix();
+  string filesystem_suffix = Environment::getFileSystemSuffix();
 
   // Get our image pattern variable
   string filename_pattern = Environment::getFileNamePattern();
@@ -88,6 +89,7 @@ void FIF::run( Session* session, const string& src ){
       test = IIPImage( argument );
       test.setFileNamePattern( filename_pattern );
       test.setFileSystemPrefix( filesystem_prefix );
+      test.setFileSystemSuffix( filesystem_suffix );
       test.Initialise();
     }
     // If not, look up our object
@@ -106,6 +108,7 @@ void FIF::run( Session* session, const string& src ){
 	test = IIPImage( argument );
 	test.setFileNamePattern( filename_pattern );
 	test.setFileSystemPrefix( filesystem_prefix );
+	test.setFileSystemSuffix( filesystem_suffix );
 	test.Initialise();
 	// Delete items if our list of images is too long.
 	if( session->imageCache->size() >= MAXIMAGECACHE ) session->imageCache->erase( session->imageCache->begin() );
@@ -178,8 +181,9 @@ void FIF::run( Session* session, const string& src ){
     // Open image and update timestamp
     (*session->image)->openImage();
 
-    // Check timestamp consistency. If cached timestamp is older, update metadata
-    if( timestamp>0 && (timestamp < (*session->image)->timestamp) ){
+    // Check timestamp consistency. If cached timestamp is different, update metadata
+    if( timestamp>0 && (timestamp != (*session->image)->timestamp) ){
+      timestamp = -1;    // Indicate that we have a reloaded image
       if( session->loglevel >= 2 ){
 	*(session->logfile) << "FIF :: Image timestamp changed: reloading metadata" << endl;
       }
@@ -198,22 +202,27 @@ void FIF::run( Session* session, const string& src ){
     session->response->setLastModified( (*session->image)->getTimestamp() );
 
     if( session->loglevel >= 2 ){
+      tm *t = gmtime( &(*session->image)->timestamp );
+      char strt[64];
+      strftime( strt, 64, "%a, %d %b %Y %H:%M:%S GMT", t );
+
       *(session->logfile) << "FIF :: Image dimensions are " << (*session->image)->getImageWidth()
 			  << " x " << (*session->image)->getImageHeight() << endl
 			  << "FIF :: Image contains " << (*session->image)->channels
 			  << " channel" << (((*session->image)->channels>1)?"s":"") << " with "
-			  << (*session->image)->bpc << " bit" << (((*session->image)->bpc>1)?"s":"") << " per channel" << endl;
-      tm *t = gmtime( &(*session->image)->timestamp );
-      char strt[64];
-      strftime( strt, 64, "%a, %d %b %Y %H:%M:%S GMT", t );
-      *(session->logfile) << "FIF :: Image timestamp: " << strt << endl;
+			  << (*session->image)->bpc << " bit" << (((*session->image)->bpc>1)?"s":"") << " per channel" << endl
+			  << "FIF :: Image timestamp: " << strt << endl;
+      if( (*session->image)->isStack() ){
+	std::list <Stack> stack = (*session->image)->getStack();
+	*(session->logfile) << "FIF :: Image is a stack containing " << stack.size() << " elements" << endl;
+      }
     }
 
   }
   catch( const file_error& error ){
     // Unavailable file error code is 1 3
     session->response->setError( "1 3", "FIF" );
-    throw error;
+    throw;
   }
 
 
@@ -225,12 +234,10 @@ void FIF::run( Session* session, const string& src ){
 
     strptime( (session->headers)["HTTP_IF_MODIFIED_SINCE"].c_str(), "%a, %d %b %Y %H:%M:%S %Z", &mod_t );
 
-    // Use POSIX cross-platform mktime() function to generate a timestamp.
-    // This needs UTC, but to avoid a slow TZ environment reset for each request, we set this once globally in Main.cc
-    t = mktime(&mod_t);
+    t = timegm( &mod_t );
     if( (session->loglevel >= 1) && (t == -1) ) *(session->logfile) << "FIF :: Error creating timestamp" << endl;
 
-    if( (*session->image)->timestamp <= t ){
+    if( (timestamp != -1) && ((*session->image)->timestamp == t) ){
       if( session->loglevel >= 2 ){
 	*(session->logfile) << "FIF :: Unmodified content" << endl;
 	*(session->logfile) << "FIF :: Total command time " << command_timer.getTime() << " microseconds" << endl;
@@ -243,10 +250,6 @@ void FIF::run( Session* session, const string& src ){
       }
     }
   }
-
-  // Reset our angle values
-  session->view->xangle = 0;
-  session->view->yangle = 90;
 
 
   if( session->loglevel >= 2 ){

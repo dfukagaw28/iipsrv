@@ -1,7 +1,7 @@
 /*
     IIP Generic Task Class
 
-    Copyright (C) 2006-2019 Ruven Pillay
+    Copyright (C) 2006-2023 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -39,6 +39,9 @@
 #ifdef HAVE_PNG
 #include "PNGCompressor.h"
 #endif
+#ifdef HAVE_WEBP
+#include "WebPCompressor.h"
+#endif
 
 
 // Define our http header cache max age (24 hours)
@@ -68,6 +71,9 @@ struct Session {
   JPEGCompressor* jpeg;
 #ifdef HAVE_PNG
   PNGCompressor* png;
+#endif
+#ifdef HAVE_WEBP
+  WebPCompressor* webp;
 #endif
   View* view;
   IIPResponse* response;
@@ -110,10 +116,10 @@ class Task {
  public:
 
   /// Virtual destructor
-  virtual ~Task() {;};
+  virtual ~Task() {};
 
   /// Main public function
-  virtual void run( Session* session, const std::string& argument ) {;};
+  virtual void run( Session* session, const std::string& argument ) {};
 
   /// Factory function
   /** @param type command type */
@@ -145,7 +151,9 @@ class OBJ : public Task {
   void vertical_views();
   void min_max_values();
   void resolutions();
+  void dpi();
   void metadata( std::string field );
+  void stack();
 
 };
 
@@ -220,13 +228,6 @@ class FIF : public Task {
 };
 
 
-/// PNG Tile Command
-/*class PTL : public Task {
- public:
-  void run( Session* session, const std::string& argument );
-};*/
-
-
 /// JPEG Tile Export Command
 class JTL : public Task {
  public:
@@ -238,6 +239,28 @@ class JTL : public Task {
       @param tile requested tile index
    */
   void send( Session* session, int resolution, int tile );
+};
+
+
+/// PNG Tile Command
+class PTL : public JTL {
+ public:
+  void run( Session* session, const std::string& argument ){
+    // Set our encoding format and call JTL::run
+    session->view->output_format = PNG;
+    JTL::run( session, argument );
+  };
+};
+
+
+/// WebP Tile Command
+class WTL : public JTL {
+public:
+  void run( Session* session, const std::string& argument ){
+    // Set our encoding format and call JTL::run
+    session->view->output_format = WEBP;
+    JTL::run( session, argument );
+  };
 };
 
 
@@ -345,6 +368,13 @@ class CTW : public Task {
 
 /// Color Conversion Command
 class COL : public Task {
+ public:
+  void run( Session* session, const std::string& argument );
+};
+
+
+/// CNV Convolution Filter Command
+class CNV : public Task {
  public:
   void run( Session* session, const std::string& argument );
 };

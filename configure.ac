@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT(iipsrv,1.1,ruven@users.sourceforge.net)
+AC_INIT( [iipsrv], [1.2], [ruven@users.sourceforge.net] )
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
 
@@ -62,6 +62,11 @@ AS_IF([test "x$enable_openmp" != "xyes"], [
  OPENMP=true
 ])
 
+# Check for C++11 chrono timers
+AC_LANG_PUSH([C++])
+AC_CHECK_HEADER([chrono], [AC_DEFINE(HAVE_STL_CHRONO)])
+AC_LANG_POP([C++])
+
 
 #************************************************************
 # Enable debugging
@@ -94,7 +99,7 @@ AC_SEARCH_LIBS(gzopen, z)
 #************************************************************
 # Check for libmemcached
 
-AC_CHECK_HEADERS( libmemcached/memcached.h,
+AC_CHECK_HEADER( libmemcached/memcached.h,
 	AC_SEARCH_LIBS( memcached_create,
 		memcached,
 		MEMCACHED=true,
@@ -152,8 +157,67 @@ AC_SUBST(LIBFCGI_LIBS)
 
 
 
+
+#************************************************************
+#     Check for PNG support
+#************************************************************
+
+PNG=false
+AC_ARG_ENABLE( png,
+    [  --disable-png           disable PNG])
+
+
+if test "x$enable_png" == "xno"; then
+   AC_MSG_RESULT([disabling PNG support])
+   AM_CONDITIONAL([ENABLE_PNG], [false])
+else
+   AC_CHECK_HEADER( png.h,
+     AC_SEARCH_LIBS(
+       png_create_write_struct,
+       png,
+       PNG=true,
+       PNG=false )
+     )
+     if test "x${PNG}" = xtrue; then
+	AM_CONDITIONAL([ENABLE_PNG], [true])
+	AC_DEFINE(HAVE_PNG)
+     else
+	AM_CONDITIONAL([ENABLE_PNG], [false])
+     fi
+fi
+
+
+#************************************************************
+#     Check for WebP support
+#************************************************************
+
+WEBP=false
+AC_ARG_ENABLE( webp,
+    [  --disable-webp           disable WebP])
+
+
+if test "x$enable_webp" == "xno"; then
+   AC_MSG_RESULT([disabling WebP support])
+   AM_CONDITIONAL([ENABLE_WEBP], [false])
+else
+   AC_CHECK_HEADER( webp/encode.h, [WEBP=true], [WEBP=false] )
+   AC_SEARCH_LIBS( [WebPEncode], [webp], [WEBP=true], [WEBP=false] )
+   AC_SEARCH_LIBS( [WebPMuxAssemble], [webpmux], [WEBP=true], [WEBP=false] )
+
+   if test "x${WEBP}" = xtrue; then
+      AM_CONDITIONAL([ENABLE_WEBP], [true])
+      AC_DEFINE(HAVE_WEBP)
+   else
+      AM_CONDITIONAL([ENABLE_WEBP], [false])
+   fi
+
+fi
+
+
+
 #************************************************************
 # Check for libdl for dynamic library loading
+#************************************************************
 
 AC_ARG_ENABLE(modules,
     [  --enable-modules        enable dynamic module loading] )
@@ -179,6 +243,7 @@ AC_SUBST(DL_LIBS)
 
 #************************************************************
 # Check for JPEG2000 support from either Kakadu or OpenJPEG
+#************************************************************
 
 JPEG2000_CODEC=false
 
@@ -195,31 +260,41 @@ if test -n "$kakadu_path"; then
 		AC_MSG_RESULT([configure: Found Kakadu sources. Will compile JPEG2000 support]); KAKADU=true;,
 		AC_MSG_RESULT([configure: No Kakadu JPEG2000 Sources Found]); KAKADU=false
 	)
-	AM_CONDITIONAL([ENABLE_KAKADU],[test x$KAKADU=xtrue])
+	AM_CONDITIONAL([ENABLE_KAKADU],[test x$KAKADU = xtrue])
 
 	if test "x${KAKADU}" = xtrue; then
 		AC_DEFINE(HAVE_KAKADU)
 		INCLUDES="$INCLUDES -I$kakadu_path/managed/all_includes/"
-		EXTRAS="KakaduImage.o"
+		KAKADU_OBJS="$kakadu_path/apps/make/jpx.o $kakadu_path/apps/make/jp2.o $kakadu_path/apps/make/kdu_stripe_decompressor.o"
 		kakadu_lib_name=`basename $kakadu_path/apps/make/*.so | sed 's/^lib//' | sed 's/.so$//'`
-		LIBS="$LIBS $kakadu_path/apps/make/jpx.o $kakadu_path/apps/make/jp2.o $kakadu_path/apps/make/kdu_stripe_decompressor.o -L$kakadu_path/apps/make -l$kakadu_lib_name -lpthread"
+		LIBS="$LIBS -L$kakadu_path/apps/make -l$kakadu_lib_name -lpthread"
 
 		# Check for SSSE3 support in Kakadu
 		AC_CHECK_FILE( $kakadu_path/apps/make/ssse3_stripe_transfer.o,
+			AC_MSG_RESULT([configure: Kakadu has support for SSE3]);
 			KDU_SSSE3=true
 		)
 		if test "x${KDU_SSSE3}" = xtrue; then
-			LIBS="$LIBS $kakadu_path/apps/make/ssse3_stripe_transfer.o"
+			KAKADU_OBJS="$KAKADU_OBJS $kakadu_path/apps/make/ssse3_stripe_transfer.o"
 		fi
 
 		# Check for AVX2 support in Kakadu
 		AC_CHECK_FILE( $kakadu_path/apps/make/avx2_stripe_transfer.o,
+			AC_MSG_RESULT([configure: Kakadu has support for AVX2]);
+			KDU_AVX2=true
+		)
+		if test "x${KDU_AVX2}" = xtrue; then
+			KAKADU_OBJS="$KAKADU_OBJS $kakadu_path/apps/make/avx2_stripe_transfer.o"
+		fi
+
+		# Check for addition of kdu_client_window in versions 7.5 and upwards
+		AC_CHECK_FILE( $kakadu_path/apps/make/kdu_client_window.o,
 			AC_MSG_RESULT([configure: Kakadu is >= v7.5]);
 			KDU_75=true,
 			AC_MSG_RESULT([configure: Kakadu is < v7.5])
 		)
 		if test "x${KDU_75}" = xtrue; then
-			LIBS="$LIBS $kakadu_path/apps/make/avx2_stripe_transfer.o $kakadu_path/apps/make/kdu_client_window.o"
+			KAKADU_OBJS="$KAKADU_OBJS $kakadu_path/apps/make/kdu_client_window.o"
 		fi
 
 		AC_CHECK_FILE( $kakadu_path/apps/make/supp_local.o,
@@ -228,16 +303,21 @@ if test -n "$kakadu_path"; then
                         AC_MSG_RESULT([configure: Kakadu is < v7.10])
                 )
 		if test "x${KDU_7A}" = xtrue; then
-			LIBS="$LIBS $kakadu_path/apps/make/supp_local.o"
+			KAKADU_OBJS="$KAKADU_OBJS $kakadu_path/apps/make/supp_local.o"
+			AC_DEFINE([HAVE_KAKADUMETANODE])
 		fi
 
 		JPEG2000_CODEC="true (Kakadu)"
 
 		INCLUDES="$INCLUDES -I."
 		AC_SUBST(INCLUDES)
-		AC_SUBST(EXTRAS)
+		AC_SUBST(KAKADU_OBJS)
 
-		AC_CHECK_LIB(c,get_nprocs_conf,AC_DEFINE(NPROCS))
+		AC_LANG_PUSH([C++])
+		AC_CHECK_HEADER([thread], [AC_DEFINE(HAVE_STL_THREAD)])
+		AC_LANG_POP([C++])
+
+		AC_CHECK_FUNC([get_nprocs_conf],[AC_DEFINE(NPROCS)])
 	fi
 else
 	AM_CONDITIONAL([ENABLE_KAKADU],[false])
@@ -303,10 +383,8 @@ else
 
 		if test "x$OPENJPEG" = xtrue; then
 		    AC_DEFINE(HAVE_OPENJPEG)
-		    EXTRAS="OpenJPEGImage.o"
 		    JPEG2000_CODEC="true (OpenJPEG)"
 		    AM_CONDITIONAL([ENABLE_OPENJPEG], [test x$OPENJPEG = xtrue])
-		    AC_SUBST(EXTRAS)
 		    AC_SUBST(INCLUDES)
 		    AC_SUBST(LIBS)
 		else
@@ -316,28 +394,6 @@ else
 	fi
 fi
 
-
-#************************************************************
-#     Check for PNG support
-#************************************************************
-
-#AC_CHECK_HEADERS( png.h,
-#	AC_SEARCH_LIBS(
-#		png_create_read_struct,
-#		png,
-#		PNG=true,
-#		PNG=false )
-#)
-
-# Disable PNG for now
-#PNG=false
-
-#if test "x${PNG}" = xtrue; then
-#	AM_CONDITIONAL([ENABLE_PNG], [true])
-#	AC_DEFINE(HAVE_PNG)
-#else
-#	AM_CONDITIONAL([ENABLE_PNG], [false])
-#fi
 
 
 
@@ -407,12 +463,10 @@ AC_OUTPUT
 AC_MSG_RESULT([
 Options Enabled:
 ---------------
- Memcached  :  ${MEMCACHED}
- JPEG2000   :  ${JPEG2000_CODEC}
- OpenMP     :  ${OPENMP}
- Loggers    :  ${LOGGING}
+ Memcached   :  ${MEMCACHED}
+ JPEG2000    :  ${JPEG2000_CODEC}
+ OpenMP      :  ${OPENMP}
+ Loggers     :  ${LOGGING}
+ PNG Output  :  ${PNG}
+ WebP Output :  ${WEBP}
 ])
-
-# PNG Output:			${PNG}
-# LitleCMS:			${LCMS}
-#])

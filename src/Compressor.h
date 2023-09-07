@@ -1,6 +1,6 @@
 /*  Generic compressor class - extended by JPEG and PNG Compressor classes
 
-    Copyright (C) 2017-2018 Ruven Pillay
+    Copyright (C) 2017-2023 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -33,8 +33,21 @@ class Compressor {
 
  protected:
 
-  /// Quality level
+  /// Quality or compression level for all image types
   int Q;
+
+  /// Pointer to the header data for the output image
+  unsigned char *header;
+
+  /// Size of the header data
+  unsigned int header_size;
+
+  /// Physical resolution for X and Y directions
+  float dpi_x, dpi_y;
+
+  /// Resolution units
+  /** Units can be 0 for unknown, 1 for dots/inch or 2 for dots/cm */
+  int dpi_units;
 
   /// ICC Profile
   std::string icc;
@@ -51,11 +64,26 @@ class Compressor {
 
  public:
 
+  /// Constructor
+  /** @param compressionLevel default compression level for codec */
+  Compressor( int compressionLevel ) :
+    Q( compressionLevel ),
+    header( NULL ),
+    header_size( 0 ),
+    dpi_x( 0 ),
+    dpi_y( 0 ),
+    dpi_units( 0 ) {};
+
+
   virtual ~Compressor() {};
 
 
   /// Get the current quality level
-  inline int getQuality() { return Q; }
+  inline int getQuality() const { return Q; }
+
+
+  /// Set the physical output resolution
+  inline void setResolution( float x, float y, int units ){ dpi_x = x; dpi_y = y; dpi_units = units; };
 
 
   /// Set the ICC profile
@@ -70,7 +98,7 @@ class Compressor {
 
   /// Return the image header size
   /** @return header size in bytes */
-  virtual unsigned int getHeaderSize() { return 0; };
+  virtual unsigned int getHeaderSize() const { return 0; };
 
 
   /// Return a pointer to the image header itself
@@ -118,12 +146,17 @@ class Compressor {
 
   /// Get mime type
   /** @return IANA mime type as const char* */
-  virtual const char* getMimeType() { return "image/example"; };
+  virtual const char* getMimeType() const { return "image/example"; };
 
 
   /// Get file suffix
   /** @return suffix as const char* */
-  virtual const char* getSuffix() { return "img"; };
+  virtual const char* getSuffix() const { return "img"; };
+
+
+  /// Get compression type
+  /** @return compressionType */
+  virtual CompressionType getCompressionType() const { return UNCOMPRESSED; };
 
 };
 

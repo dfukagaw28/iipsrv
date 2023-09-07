@@ -1,7 +1,7 @@
 /*
     Basic Header-Only Logging Class
 
-    Copyright (C) 2019 Ruven Pillay
+    Copyright (C) 2019-2023 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@ class SyslogStream : public std::streambuf {
 
   /// Open a syslog connection
   void open(){
-    openlog( "iipsrv", LOG_NDELAY, LOG_USER );
+    openlog( "iipsrv", LOG_NDELAY | LOG_PID, LOG_USER );
   }
 
   /// Close syslog connection
@@ -111,7 +111,7 @@ class Logger : public std::ostream {
   /// Open our logging output
   /** @param file input file name
    */
-  void open( std::string file ){
+  void open( const std::string& file ){
 
 #ifdef HAVE_SYSLOG_H
     // Open a syslog connection - assign syslog stream to our stream buffer

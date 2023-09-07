@@ -1,7 +1,7 @@
 /*
     IIP Command Handler Member Functions
 
-    Copyright (C) 2006-2019 Ruven Pillay.
+    Copyright (C) 2006-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,7 +21,9 @@
 
 #include "Task.h"
 #include "Tokenizer.h"
+#include "URL.h"
 #include <cstdlib>
+#include <cmath>
 #include <algorithm>
 
 
@@ -49,7 +51,12 @@ Task* Task::factory( const string& t ){
   else if( type == "rgn" ) return new RGN;
   else if( type == "rot" ) return new ROT;
   else if( type == "til" ) return new TIL;
-//  else if( type == "ptl" ) return new PTL;
+#ifdef HAVE_PNG
+  else if( type == "ptl" ) return new PTL;
+#endif
+#ifdef HAVE_WEBP
+  else if( type == "wtl" ) return new WTL;
+#endif
   else if( type == "jtl" ) return new JTL;
   else if( type == "jtls" ) return new JTLS;
   else if( type == "icc" ) return new ICC;
@@ -64,6 +71,7 @@ Task* Task::factory( const string& t ){
   else if( type == "deepzoom" ) return new DeepZoom;
   else if( type == "ctw" ) return new CTW;
   else if( type == "col" ) return new COL;
+  else if( type == "cnv" ) return new CNV;
   else if( type == "iiif" ) return new IIIF;
   else return NULL;
 
@@ -88,14 +96,21 @@ void QLT::run( Session* session, const string& argument ){
     // Check the value is realistic
     if( factor < 0 || factor > 100 ){
       if( session->loglevel >= 2 ){
-	*(session->logfile) << "QLT :: JPEG Quality factor of " << argument
-			    << " out of bounds. Must be 0-100" << endl;
+	*(session->logfile) << "QLT :: Quality factor of " << argument
+			    << " out of bounds. Must be 0-100 for JPEG and 0-9 for PNG" << endl;
       }
     }
 
     session->jpeg->setQuality( factor );
-  }
+#ifdef HAVE_PNG
+    session->png->setQuality( factor );
+#endif
+#ifdef HAVE_WEBP
+    session->webp->setQuality( factor );
+#endif
 
+    if( session->loglevel >= 2 ) *(session->logfile) << "QLT :: Requested quality is " << factor << endl;
+  }
 }
 
 
@@ -103,15 +118,18 @@ void SDS::run( Session* session, const string& argument ){
 
   if( session->loglevel >= 3 ) *(session->logfile) << "SDS handler reached" << endl;
 
-  // Parse the argument list
-  int delimitter = argument.find( "," );
-  string tmp = argument.substr( 0, delimitter );
-  session->view->xangle = atoi( tmp.c_str() );
-  string arg2 = argument.substr( delimitter + 1, argument.length() );
-
-  delimitter = arg2.find( "," );
-  tmp = arg2.substr( 0, delimitter );
-  session->view->yangle = atoi( tmp.c_str() );
+  // Parse the argument - check whether we have a single value or 2 separated by a camma
+  std::string::size_type delimitter = argument.find( "," );
+  if( delimitter != string::npos ){
+    string arg1 = argument.substr( 0, delimitter );
+    session->view->xangle = atoi( arg1.c_str() );
+    string arg2 = argument.substr( delimitter + 1, argument.length() );
+    session->view->yangle = atoi( arg2.c_str() );
+  }
+  else{
+    session->view->xangle = atoi( argument.c_str() );
+    session->view->yangle = 0;
+  }
 
   if( session->loglevel >= 2 ) *(session->logfile) << "SDS :: set to " << session->view->xangle << ", "
 						   << session->view->yangle << endl;
@@ -119,35 +137,60 @@ void SDS::run( Session* session, const string& argument ){
 }
 
 
+/// Syntax: MINXMAX=<channel>:<min>,<max> where channel is an int from 0 to number of channels - 1
+/// and min, max are integers or floats
 void MINMAX::run( Session* session, const string& argument ){
+
+  int channel = 0;
+  float min, max;
+  bool all = false;
 
   if( session->loglevel >= 3 ) *(session->logfile) << "MINMAX handler reached" << endl;
 
-  // Parse the argument list: command is of the form MINXMAX=<channel>:<min>,<max>
+  // Parse the argument and extract our channel index first
   int delimitter = argument.find( ":" );
   string tmp = argument.substr( 0, delimitter );
-  int nchan = atoi( tmp.c_str() ) - 1;
+
+  if( tmp == "-" ) all = true;
+  else channel = atoi( tmp.c_str() );
+
+  unsigned int nc = (*session->image)->getNumChannels();
 
   // Sanity check for channel index
-  if( nchan < 0 || nchan > (int)(*session->image)->getNumChannels() ){
+  if( channel < 0 || channel >= (int)nc ){
     if( session->loglevel >= 1 ) *(session->logfile) << "MINMAX :: Error: channel number out of bounds: "
 						     << tmp.c_str() << endl;
     return;
   }
 
-  string arg2 = argument.substr( delimitter + 1, argument.length() );
-
+  // Parse our min
+  string arg2 = argument.substr( delimitter + 1, string::npos );
   delimitter = arg2.find( "," );
-  tmp = arg2.substr( 0, delimitter );
-  (*(session->image))->min[nchan] = atof( tmp.c_str() );
-  string arg3 = arg2.substr( delimitter + 1, arg2.length() );
+  min = atof( arg2.substr( 0, delimitter ).c_str() );
 
-  delimitter = arg3.find( "," );
-  tmp = arg3.substr( 0, delimitter );
-  (*(session->image))->max[nchan] = atof( tmp.c_str() );
+  // Parse our max
+  string arg3 = arg2.substr( delimitter + 1, string::npos );
+  max = atof( arg3.c_str() );
 
-  if( session->loglevel >= 2 ) *(session->logfile) << "MINMAX :: set to " << (*(session->image))->min[nchan] << ", "
-						   << (*(session->image))->max[nchan] << " for channel " << nchan << endl;
+  // Indicate that we have a user-defined min/max
+  session->view->minmax = true;
+
+  if( all ){
+    for( unsigned int n=0; n < nc; n++ ){
+      (*(session->image))->min[n] = min;
+      (*(session->image))->max[n] = max;
+    }
+  }
+  else{
+    (*(session->image))->min[channel] = min;
+    (*(session->image))->max[channel] = max;
+  }
+
+  if( session->loglevel >= 2 ){
+    *(session->logfile) << "MINMAX :: min and max input range set to " << min << "-" << max << " for ";
+    if( all ) *(session->logfile) << "all channels" << endl;
+    else *(session->logfile) << "channel " << channel << endl;
+  }
 }
 
 
@@ -179,12 +222,23 @@ void CNT::run( Session* session, const string& argument ){
 
 void GAM::run( Session* session, const string& argument ){
 
-  float gamma = (float) atof( argument.c_str() );
+  string arg = argument;
+  transform( arg.begin(), arg.end(), arg.begin(), ::tolower );
 
   if( session->loglevel >= 2 ) *(session->logfile) << "GAM handler reached" << endl;
-  if( session->loglevel >= 3 ) *(session->logfile) << "GAM :: requested gamma adjustment is " << gamma << endl;
 
-  session->view->gamma = gamma;
+  // Log transform
+  if( arg == "log" || arg == "logarithm" ){
+    // Use reserved value of -1 for logarithm
+    session->view->gamma = -1;
+    if( session->loglevel >= 3 ) *(session->logfile) << "GAM :: log transform requested" << endl;
+  }
+  // Exponential transform
+  else{
+    float gamma = (float) atof( argument.c_str() );
+    session->view->gamma = gamma;
+    if( session->loglevel >= 3 ) *(session->logfile) << "GAM :: requested gamma adjustment is " << gamma << endl;
+  }
 }
 
 
@@ -194,14 +248,25 @@ void CVT::run( Session* session, const string& src ){
   string argument = src;
   transform( argument.begin(), argument.end(), argument.begin(), ::tolower );
 
-  // For the moment, only deal with JPEG. If we have specified something else, give a warning
-  // and send JPEG anyway
-  if( argument != "jpeg" ){
-    if( session->loglevel >= 1 ) *(session->logfile) << "CVT :: Unsupported request: '" << argument << "'. Sending JPEG." << endl;
-  }
-  else{
+  if( argument == "jpeg" || argument == "jpg" ){
     session->view->output_format = JPEG;
     if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: JPEG output" << endl;
+  }
+#ifdef HAVE_PNG
+  else if( argument == "png" ){
+    session->view->output_format = PNG;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: PNG output" << endl;
+  }
+#endif
+  #ifdef HAVE_WEBP
+  else if( argument == "webp" ){
+    session->view->output_format = WEBP;
+    if( session->loglevel >= 3 ) *(session->logfile) << "CVT :: WebP output" << endl;
+  }
+#endif
+  else{
+    session->view->output_format = JPEG;
+    if( session->loglevel >= 1 ) *(session->logfile) << "CVT :: Unsupported request: '" << argument << "'. Sending JPEG" << endl;
   }
 
   this->send( session );
@@ -427,15 +492,22 @@ void LYR::run( Session* session, const string& argument ){
 }
 
 
-void CTW::run( Session* session, const string& argument ){
+void CTW::run( Session* session, const string& src ){
 
-  /* Matrices should be formatted as CTW=[a,b,c;d,e,f;g,h,i] where commas separate row values
-     and semi-colons separate columns.
-     Thus, the above argument represents the 3x3 square matrix:
+  /* Matrices should be formatted as CTW=[a,b,c;d,e,f;g,h,i] where commas separate the column
+     values within a single row and semi-colons separate each row.
+     Thus, the above example represents the 3x3 square matrix:
      [ a b c
        d e f
        g h i ]
+     Each row represents an output channel and each column the coefficients to be used for
+     each input band. There should, therefore, be as many columns (coefficients) as input
+     channels and as many rows as required output channels
   */
+
+  // First URL decode our string
+  URL url( src );
+  string argument = url.decode();
 
   if( argument.length() ){
     if( session->loglevel >= 2 ) *(session->logfile) << "CTW handler reached" << endl;
@@ -496,4 +568,103 @@ void COL::run( Session* session, const string& argument ){
   if( ctype == "grey" || ctype == "gray" ) session->view->colourspace = GREYSCALE;
   else if( ctype == "binary" ) session->view->colourspace = BINARY;
   
+}
+
+
+void CNV::run( Session* session, const string& src ){
+
+  /* The argument is a predefined convolution kernel name or a comma separated
+     list of values which are entries in a convolution filter kernel matrix.
+     The matrix must be square and of odd dimension.
+  */
+
+  if( session->loglevel >= 3 ) *(session->logfile) << "CNV handler reached" << endl;
+
+  // First URL decode our string
+  URL url( src );
+  string argument = url.decode();
+
+  int pos1 = argument.find("[");
+  int pos2 = argument.find("]");
+  string matrix = argument.substr( pos1+1, pos2-pos1-1 );
+
+  // Extract the contents of the array and convert to lower-case if necessary
+  string ctype = matrix;
+  transform( ctype.begin(), ctype.end(), ctype.begin(), ::tolower );
+
+  if( ctype == "sobel" ){
+    session->view->convolution = { -1, 0, +1,
+                                   -2, 0, +2,
+                                   -1, 0, +1 };
+  }
+  else if( ctype == "prewitt" ){
+    session->view->convolution = { +1, 0, -1,
+                                   +1, 0, -1,
+                                   +1, 0, -1 };
+  }
+  else if( ctype == "scharr" ){
+    session->view->convolution = { -3, 0, +3,
+                                  -10, 0, 10,
+                                   -3, 0, +3 };
+  }
+  else if( ctype == "laplace" ){
+    session->view->convolution = { -1, -1, -1,
+                                   -1, +8, -1,
+                                   -1, -1, -1 };
+  }
+  else if( ctype == "gaussian" ){
+    session->view->convolution = { 1, 2, 1,
+                                   2, 4, 2,
+                                   1, 2, 1 };
+  }
+  else if( ctype == "sharpen" ){
+    session->view->convolution = {  0, -1,  0,
+                                   -1,  5, -1,
+                                    0, -1,  0 };
+  }
+  else if( ctype == "emboss" ){
+    session->view->convolution = { -2, -1, 0,
+                                   -1, 1, 1,
+                                    0, 1, 2 };
+  }
+  else{
+
+    Tokenizer izer( matrix, "," );
+
+    vector<float> kernel;
+
+    while( izer.hasMoreTokens() && kernel.size()<26 ){
+      try{
+       kernel.push_back( atof( izer.nextToken().c_str() ));
+      }
+      catch( const string& error ){
+       if( session->loglevel >= 1 ) *(session->logfile) << error << endl;
+      }
+    }
+
+    unsigned int dimension = (unsigned int) sqrtf( kernel.size() );
+
+    if( kernel.size() >= 26 ){
+      if( session->loglevel >= 2 ){
+	*(session->logfile) << "CNV :: Maximum convolution matrix size is 5x5. Supplied matrix: "
+			    << argument << " will be ignored" << endl;
+      }
+    }
+    else if( dimension * dimension != kernel.size() ){
+      if( session->loglevel >= 2 ){
+	*(session->logfile) << "CNV :: Convolution matrix must be square. Supplied matrix: "
+			    << argument << " will be ignored" << endl;
+      }
+    }
+    else if( dimension % 2 == 0 ){
+      if( session->loglevel >= 2 ){
+	*(session->logfile) << "CNV :: Convolution matrix must have odd dimension. Supplied matrix: "
+			    << argument << " will be ignored" << endl;
+      }
+    }
+    else {
+      session->view->convolution = kernel;
+    }
+  }
+
 }

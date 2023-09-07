@@ -2,7 +2,7 @@
 
     IIIF Request Command Handler Class Member Function
 
-    Copyright (C) 2014-2019 Ruven Pillay
+    Copyright (C) 2014-2023 Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,20 +20,30 @@
 */
 
 #include <algorithm>
+#include <sstream>
 #include <cmath>
 #include <cstdlib>
-#include <sstream>
 #include "Task.h"
 #include "Tokenizer.h"
 #include "Transforms.h"
 #include "URL.h"
 
-
 // Define several IIIF strings
 #define IIIF_SYNTAX "IIIF syntax is {identifier}/{region}/{size}/{rotation}/{quality}{.format}"
-#define IIIF_PROFILE "http://iiif.io/api/image/2/level1.json"
-#define IIIF_CONTEXT "http://iiif.io/api/image/2/context.json"
+
+// The canonical IIIF protocol URI
 #define IIIF_PROTOCOL "http://iiif.io/api/image"
+
+// The context is the protocol plus API version
+#define IIIF_CONTEXT IIIF_PROTOCOL "/%d/context.json"
+
+// IIIF compliance level
+#ifdef HAVE_PNG
+#define IIIF_PROFILE "level2"
+#else
+#define IIIF_PROFILE "level1"
+#endif
+
 
 using namespace std;
 
@@ -96,18 +106,32 @@ void IIIF::run( Session* session, const string& src )
     else{
       string request_uri = session->headers["REQUEST_URI"];
       request_uri.erase( request_uri.length() - suffix.length(), string::npos );
-      id = "http://" + session->headers["HTTP_HOST"] + request_uri;
+      id = "//" + session->headers["HTTP_HOST"] + request_uri;
     }
     string header = string( "Status: 303 See Other\r\n" )
                     + "Location: " + id + "/info.json\r\n"
                     + "Server: iipsrv/" + VERSION + "\r\n"
+                    + "X-Powered-By: IIPImage\r\n"
                     + "\r\n";
-    session->out->printf( (const char*) header.c_str() );
+    session->out->putStr( header.c_str(), (int) header.size() );
     session->response->setImageSent();
     if ( session->loglevel >= 2 ){
       *(session->logfile) << "IIIF :: Sending HTTP 303 See Other : " << id + "/info.json" << endl;
     }
     return;
+  }
+
+  // Extract any meta-identifier in the file name that may refer to a page within an image stack or multi-page image
+  // These consist of a semi-colon and a page or stack index of the form <image>;<index> For example: image.tif;3
+  const char delimitter = ',';
+  if( filename.find_last_of( delimitter ) != string::npos ){
+    size_t pos = filename.find_last_of( delimitter );
+    int page = atoi( filename.substr(pos+1).c_str() );
+    session->view->xangle = page;
+    filename = filename.substr(0,pos);
+    if ( session->loglevel >= 3 ){
+      *(session->logfile) << "IIIF :: Requested stack or page index: " << page << endl;
+    }
   }
 
   // Check whether requested image exists
@@ -129,6 +153,27 @@ void IIIF::run( Session* session, const string& src )
   session->view->setImageSize( width, height );
   session->view->setMaxResolutions( numResolutions );
 
+  // Set a default IIIF version
+  int iiif_version = session->codecOptions["IIIF_VERSION"];
+
+  // Check whether the client has requested a specific IIIF version within the HTTP Accept header
+  //  - first look for the protocol prefix
+  size_t pos = session->headers["HTTP_ACCEPT"].find( IIIF_PROTOCOL );
+  if( pos != string::npos ){
+    // The Accept header should contain a versioned context string of the form http://iiif.io/api/image/3/context.json
+    string profile = session->headers["HTTP_ACCEPT"].substr( pos, string(IIIF_PROTOCOL).size()+15 );
+    // Make sure the string is correctly terminated
+    if( profile.substr( string(IIIF_PROTOCOL).size()+2 ) == "/context.json" ){
+      int v;
+      if( sscanf( profile.c_str(), IIIF_CONTEXT, &v ) == 1 ){
+        // Set cache control to private if user request is not for the default version
+        if( v != (int)iiif_version ) session->response->setCacheControl( "private" );
+        iiif_version = v;
+        if ( session->loglevel >= 2 ) *(session->logfile) << "IIIF :: User request for IIIF version " << iiif_version << endl;
+      }
+    }
+  }
+
   // PARSE INPUT PARAMETERS
 
   // info.json
@@ -147,8 +192,8 @@ void IIIF::run( Session* session, const string& src )
       id = host + query;
     }
     else{
-      string request_uri = session->headers["REQUEST_URI"];
 
+      string request_uri = session->headers["REQUEST_URI"];
       string scheme = session->headers["HTTPS"].empty() ? "http://" : "https://";
 
       if (request_uri.empty()){
@@ -168,9 +213,13 @@ void IIIF::run( Session* session, const string& src )
       *(session->logfile) << "IIIF :: ID is set to " << iiif_id << endl;
     }
 
+    // Set the context URL string
+    char iiif_context[48];
+    snprintf( iiif_context, 48, IIIF_CONTEXT, iiif_version );
+
+
     infoStringStream << "{" << endl
-                     << "  \"@context\" : \"" << IIIF_CONTEXT << "\"," << endl
-                     << "  \"@id\" : \"" << iiif_id << "\"," << endl
+                     << "  \"@context\" : \"" << iiif_context << "\"," << endl
                      << "  \"protocol\" : \"" << IIIF_PROTOCOL << "\"," << endl
                      << "  \"width\" : " << width << "," << endl
                      << "  \"height\" : " << height << "," << endl
@@ -197,43 +246,73 @@ void IIIF::run( Session* session, const string& src )
                      << "     { \"width\" : " << tw << ", \"height\" : " << th
                      << ", \"scaleFactors\" : [ 1"; // Scale 1 is original image
 
-    for ( unsigned int i = 1; i < numResolutions; i++ ){
-      infoStringStream << ", " << (1<<i);
+    for( unsigned int i = 1; i < numResolutions; i++ ){
+      infoStringStream << ", " << (int)( width / (*session->image)->image_widths[i] );
     }
 
     infoStringStream << " ] }" << endl
-                     << "  ]," << endl
-                     << "  \"profile\" : [" << endl
-                     << "     \"" << IIIF_PROFILE << "\"," << endl
-                     << "     { \"formats\" : [ \"jpg\" ]," << endl
-                     << "       \"qualities\" : [ \"native\",\"color\",\"gray\",\"bitonal\" ]," << endl
-                     << "       \"supports\" : [\"regionByPct\",\"regionSquare\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"rotationBy90s\",\"mirroring\"]," << endl
-		     << "       \"maxWidth\" : " << max << "," << endl
-		     << "       \"maxHeight\" : " << max << "\n     }" << endl
-                     << "  ]" << endl
-                     << "}";
+                     << "  ]," << endl;
 
-    // Get our Access-Control-Allow-Origin value, if any
-    string cors = session->response->getCORS();
-    string eof = "\r\n";
 
-    // Now output the info text
+    // Profile for IIIF version 3 and above
+    if( iiif_version >= 3 ){
+      infoStringStream << "  \"id\" : \"" << iiif_id << "\"," << endl
+		       << "  \"type\": \"ImageService3\"," << endl
+		       << "  \"profile\" : \"" << IIIF_PROFILE << "\"," << endl
+		       << "  \"maxWidth\" : " << max << "," << endl
+		       << "  \"maxHeight\" : " << max << "," << endl
+		       << "  \"extraQualities\": [\"color\",\"gray\",\"bitonal\"]," << endl
+#ifdef HAVE_WEBP
+		       << "  \"extraFormats\": [\"webp\"]," << endl
+#endif
+		       << "  \"extraFeatures\": [\"regionByPct\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"sizeUpscaling\",\"rotationBy90s\",\"mirroring\"]";
+    }
+    // Profile for IIIF versions 1 and 2
+    else {
+      infoStringStream << "  \"@id\" : \"" << iiif_id << "\"," << endl
+		       << "  \"profile\" : [" << endl
+		       << "     \"" << IIIF_PROTOCOL << "/" << iiif_version << "/" << IIIF_PROFILE << ".json\"," << endl
+		       << "     { \"formats\" : [ \"jpg\", \"png\", \"webp\" ]," << endl
+		       << "       \"qualities\" : [\"native\",\"color\",\"gray\",\"bitonal\"]," << endl
+		       << "       \"supports\" : [\"regionByPct\",\"regionSquare\",\"sizeByForcedWh\",\"sizeByWh\",\"sizeAboveFull\",\"sizeUpscaling\",\"rotationBy90s\",\"mirroring\"]," << endl
+		       << "       \"maxWidth\" : " << max << "," << endl
+		       << "       \"maxHeight\" : " << max << "\n     }" << endl
+		       << "  ]";
+    }
+
+    // Add physical dimensions service if DPI resolution exists
+    if( (*session->image)->dpi_x ){
+      infoStringStream << "," << endl
+		       << "  \"service\": [" << endl
+		       << "    {" << endl
+		       << "      \"@context\": \"http://iiif.io/api/annex/services/physdim/1/context.json\"," << endl
+		       << "      \"profile\": \"http://iiif.io/api/annex/services/physdim\"," << endl
+		       << "      \"physicalScale\": " << 1.0/(*session->image)->dpi_x << "," << endl
+		       << "      \"physicalUnits\": " << ( ((*session->image)->dpi_units==1) ? "\"in\"" : "\"cm\"" ) << endl
+		       << "    }" << endl
+		       << "  ]" << endl;
+    }
+
+    // Add final closing brackets
+    infoStringStream << endl << "}";
+
+    // Now output the HTTP header and info text
+    string mime = string("application/ld+json;profile=\"") + iiif_context + "\"";
     stringstream header;
-    header << "Server: iipsrv/" << VERSION << eof
-           << "Content-Type: application/ld+json" << eof
-           << "Last-Modified: " << (*session->image)->getTimestamp() << eof
-           << session->response->getCacheControl() << eof;
+    header << session->response->createHTTPHeader( mime, (*session->image)->getTimestamp() )
+	   << infoStringStream.str();
 
-    if ( !cors.empty() ) header << cors << eof;
-    header << eof << infoStringStream.str();
-
-    session->out->printf( (const char*) header.str().c_str() );
+    session->out->putStr( header.str().c_str(), (int) header.tellp() );
     session->response->setImageSent();
+
+    // Because of our ability to serve different versions and because of possible content-negotiation
+    // do not cache any info.json files via Memcached
+    session->response->setCachability( false );
 
     return;
 
   }
-  // Parse image request - any other than info requests are considered image requests
+  // Parse image request - anything other than info requests are considered image requests
   else{
 
     // IIIF requests are / separated with no CGI style '&' separators
@@ -242,42 +321,34 @@ void IIIF::run( Session* session, const string& src )
     // Keep track of the number of parameters than have been given
     int numOfTokens = 0;
 
+    // Our region parameters (always between 0 and 1)
+    float region[4] = {0.0, 0.0, 1.0, 1.0};
+
     // Region Parameter: { "full"; "square"; "x,y,w,h"; "pct:x,y,w,h" }
     if ( izer.hasMoreTokens() ){
-
-      // Our region parameters
-      float region[4] = { 0.0, 0.0, 1.0, 1.0 };
 
       // Get our region string and convert to lower case if necessary
       string regionString = izer.nextToken();
       transform( regionString.begin(), regionString.end(), regionString.begin(), ::tolower );
 
-      // Full export request
+      // Export request for full image
       if ( regionString == "full" ){
 	// Do nothing - region array already initialized
       }
       // Square region export using centered crop - avaialble in IIIF version 3
       else if (regionString == "square" ){
         if ( height > width ){
-	  region[0] = 0.0;
-	  region[2] = 1.0;
-	  region[3] = (float)width/(float)height;
-	  region[1] = (1.0-region[3])/2.0;
-	  session->view->setViewTop( region[1] );
-	  session->view->setViewHeight( region[3] );
+	  region[1] = (1.0-region[3]) / 2.0;
+	  region[3] = (float)width / (float)height;
         }
 	else if ( width > height ){
-	  region[1] = 0.0;
-	  region[3] = 1.0;
-	  region[2] = (float)height/(float)width;
-	  region[0] = (1.0-region[2])/2.0;
-	  session->view->setViewLeft( region[0] );
-	  session->view->setViewWidth( region[2] );
+	  region[0] = (1.0-region[2]) / 2.0;
+	  region[2] = (float)height / (float)width;
         }
-	// No need for default else clause if image is already square
+	// No need for default else clause if image is already perfectly square
       }
 
-      // Region export request
+      // Export request for region from image
       else{
 
         // Check for pct (%) and strip it from the beginning
@@ -298,18 +369,18 @@ void IIIF::run( Session* session, const string& src )
         }
 
         // Define our denominators as our session view expects a ratio, not pixel values
-        float wd = (float)width;
-        float hd = (float)height;
+        float wd = (float) width;
+        float hd = (float) height;
 
-        if ( isPCT ){
-          wd = 100.0;
-          hd = 100.0;
+        if( isPCT ){
+	  wd = 100.0;
+	  hd = 100.0;
         }
 
-        session->view->setViewLeft( region[0] / wd );
-        session->view->setViewTop( region[1] / hd );
-        session->view->setViewWidth( region[2] / wd );
-        session->view->setViewHeight( region[3] / hd );
+	region[0] = region[0] / wd;
+	region[1] = region[1] / hd;
+	region[2] = region[2] / wd;
+	region[3] = region[3] / hd;
 
         // Incorrect region request
         if ( region[2] <= 0.0 || region[3] <= 0.0 || regionIzer.hasMoreTokens() || n < 4 ){
@@ -318,11 +389,18 @@ void IIIF::run( Session* session, const string& src )
 
       } // end of else - end of parsing x,y,w,h
 
+      // Update our view with our region values
+      session->view->setViewLeft( region[0] );
+      session->view->setViewTop( region[1] );
+      session->view->setViewWidth( region[2] );
+      session->view->setViewHeight( region[3] );
+
       numOfTokens++;
 
       if ( session->loglevel > 4 ){
-        *(session->logfile) << "IIIF :: Requested Region: x:" << region[0] << ", y:" << region[1]
-                            << ", w:" << region[2] << ", h:" << region[3] << endl;
+        *(session->logfile) << "IIIF :: Requested Region (x, y, w. h): " << round( region[0] * width ) << ", " << round( region[1] * height )
+			    << ", " << round( region[2] * width ) << ", " << round( region[3] * height ) << " (ratios: "
+			    << region[0] << ", " << region[1] << ", " << region[2] << ", " << region[3] << ")" << endl;
       }
 
     }
@@ -335,10 +413,19 @@ void IIIF::run( Session* session, const string& src )
       transform( sizeString.begin(), sizeString.end(), sizeString.begin(), ::tolower );
 
       // Calculate the width and height of our region
-      requested_width = session->view->getViewWidth();
-      requested_height = session->view->getViewHeight();
-      float ratio = (float)requested_width / (float)requested_height;
+      requested_width = region[2] * width;   // view->getViewWidth not trustworthy yet (no resolution set)
+      requested_height = region[3] * height;
+
+      // Calculate ratio - use region float array directly to avoid rounding errors
+      float ratio = (region[2] * width) / (region[3] * height);
+
       unsigned int max_size = session->view->getMaxSize();
+
+      // ^ request prefix (upscaling) - remove ^ symbol and continue usual parsing
+      if( iiif_version >= 3 ){
+	if ( sizeString.substr(0, 1) == "^" ) sizeString.erase(0, 1);
+	else session->view->allow_upscaling = false;
+      }
 
       // "full" or "max" request
       if ( sizeString == "full" || sizeString == "max" ){
@@ -359,10 +446,11 @@ void IIIF::run( Session* session, const string& src )
       // "w,h", "w,", ",h", "!w,h" requests
       else{
 
-        // !w,h request - remove !, remember it and continue as if w,h request
+        // !w,h request (do not break aspect ratio) - remove the !, store the info and continue usual parsing
         if ( sizeString.substr(0, 1) == "!" ) sizeString.erase(0, 1);
         // Otherwise tell our view to break aspect ratio
         else session->view->maintain_aspect = false;
+
 
         size_t pos = sizeString.find_first_of(",");
 
@@ -401,8 +489,16 @@ void IIIF::run( Session* session, const string& src )
       }
 
 
-      if ( requested_width == 0 || requested_height == 0 ){
-        throw invalid_argument( "IIIF: invalid size" );
+      if ( requested_width <= 0 || requested_height <= 0 ){
+        throw invalid_argument( "IIIF: invalid size: requested width or height < 0" );
+      }
+
+      // Check for malformed upscaling request
+      if( iiif_version >= 3 ){
+	if( session->view->allow_upscaling == false &&
+	    ( requested_width > width || requested_height > height ) ){
+	  throw invalid_argument( "IIIF: upscaling should be prefixed with ^" );
+	}
       }
 
       // Limit our requested size to the maximum allowable size if necessary
@@ -470,16 +566,29 @@ void IIIF::run( Session* session, const string& src )
       string quality = izer.nextToken();
       transform( quality.begin(), quality.end(), quality.begin(), ::tolower );
 
-      size_t pos = quality.find_last_of(".");
+      // Strip off any query suffixes that use the ? character
+      // For example versioning such as ../default.jpg?t=23421232
+      size_t pos = quality.find_first_of("?");
+      if ( pos != string::npos ) quality = quality.substr( 0, pos );
 
-      // Format - if dot is not present, we use default and currently only supported format - JPEG
+      // Check for a format specifier
+      pos = quality.find_last_of(".");
+
+      // Get requested output format: JPEG, PNG and WebP are currently supported
       if ( pos != string::npos ){
         format = quality.substr( pos + 1, string::npos );
         quality.erase( pos, string::npos );
-        if ( format != "jpg" ){
-          throw invalid_argument( "IIIF :: Only JPEG output supported" );
-        }
+
+	if( format == "jpg" ) session->view->output_format = JPEG;
+#ifdef HAVE_PNG
+	else if( format == "png" ) session->view->output_format = PNG;
+#endif
+#ifdef HAVE_WEBP
+	else if( format == "webp" ) session->view->output_format = WEBP;
+#endif
+	else throw invalid_argument( "IIIF :: unsupported output format" );
       }
+
 
       // Quality
       if ( quality == "native" || quality == "color" || quality == "default" ){
@@ -515,6 +624,13 @@ void IIIF::run( Session* session, const string& src )
   }
   // End of parsing input parameters
 
+
+  // Get most suitable resolution and recalculate width and height of region in this resolution
+  int requested_res = session->view->getResolution();
+  unsigned int im_width = (*session->image)->image_widths[numResolutions - requested_res - 1];
+  unsigned int im_height = (*session->image)->image_heights[numResolutions - requested_res - 1];
+
+
   // Write info about request to log
   if ( session->loglevel >= 3 ){
     if ( suffix == "info.json" ){
@@ -522,7 +638,7 @@ void IIIF::run( Session* session, const string& src )
     }
     else{
       *(session->logfile) << "IIIF :: image request for " << (*session->image)->getImagePath()
-                          << " with arguments: region: " << session->view->getViewLeft() << "," << session->view->getViewTop() << ","
+                          << " with arguments: scaled region: " << session->view->getViewLeft() << "," << session->view->getViewTop() << ","
                           << session->view->getViewWidth() << "," << session->view->getViewHeight()
                           << "; size: " << requested_width << "x" << requested_height
                           << "; rotation: " << session->view->getRotation()
@@ -531,14 +647,8 @@ void IIIF::run( Session* session, const string& src )
     }
   }
 
-  // Get most suitable resolution and recalculate width and height of region in this resolution
-  int requested_res = session->view->getResolution();
-
-  unsigned int im_width = (*session->image)->image_widths[numResolutions - requested_res - 1];
-  unsigned int im_height = (*session->image)->image_heights[numResolutions - requested_res - 1];
 
   unsigned int view_left, view_top;
-
   if ( session->view->viewPortSet() ){
     // Set the absolute viewport size and extract the co-ordinates
     view_left = session->view->getViewLeft();
@@ -549,16 +659,24 @@ void IIIF::run( Session* session, const string& src )
     view_top = 0;
   }
 
-  // Determine whether this is a tile request which coincides with our tile boundaries
-  if ( ( session->view->maintain_aspect && (requested_res > 0) &&
-         (requested_width == tw) && (requested_height == th) &&
-         (view_left % tw == 0) && (view_top % th == 0) &&
-         (session->view->getViewWidth() % tw == 0) && (session->view->getViewHeight() % th == 0) &&
-         (session->view->getViewWidth() < im_width) && (session->view->getViewHeight() < im_height) )
-       ||
-       ( session->view->maintain_aspect && (requested_res == 0) &&
-         (requested_width == im_width) && (requested_height == im_height) )
-     ){
+
+  // For edge tiles, adjust the tile width and height accordingly so that we can detect pure tile requests
+  unsigned int vtw = tw;
+  unsigned int vth = th;
+  if( (width%tw > 0) && (view_left == im_width - (im_width%tw)) ) vtw = im_width%tw;
+  if( (height%th > 0) && (view_top == im_height - (im_height%th)) ) vth = im_height%th;
+
+
+  // Determine whether this is a request for an individual tile which, therefore, coincides exactly with our tile boundaries
+  if( ( session->view->maintain_aspect && (requested_res > 0) &&
+	(view_left % tw == 0) && (view_top % th == 0) &&                            // Left / top boundaries align with tile positions
+	(requested_width == vtw) && (requested_height == vth) &&                    // Request is for exact tile dimensions
+	(session->view->getViewWidth() == vtw) && (session->view->getViewHeight() == vth) ) ||  // View size should also be identical to tile dimensions
+      // For smallest resolution, image size can be given as equal or less than tile size or exactly equal to tile size
+      ( ( session->view->maintain_aspect && (requested_res == 0) ) &&
+	( ( ((unsigned int) requested_width == im_width) && ((unsigned int) requested_height == im_height)) ||
+	  ( ((unsigned int) requested_width == tw) && ((unsigned int) requested_height == th)) ) )
+      ){
 
     // Get the width and height for last row and column tiles
     unsigned int rem_x = im_width % tw;

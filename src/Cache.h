@@ -2,7 +2,7 @@
 
 /*  IIP Image Server
 
-    Copyright (C) 2005-2019 Ruven Pillay.
+    Copyright (C) 2005-2022 Ruven Pillay.
     Based on an LRU cache by Patrick Audley <http://blackcat.ca/lifeline/query.php/tag=LRU_CACHE>
     Copyright (C) 2004 by Patrick Audley
 
@@ -79,7 +79,6 @@ namespace __gnu_cxx {
 
 
 
-#include <iostream>
 #include <list>
 #include <string>
 #include "RawTile.h"
@@ -174,7 +173,7 @@ class Cache {
 
   /// Constructor
   /** @param max Maximum cache size in MB */
-  Cache( float max ) {
+  Cache( const float max ) {
     maxSize = (unsigned long)(max*1024000) ; currentSize = 0;
     // 64 chars added at the end represents an average string length
     tileSize = sizeof( RawTile ) + sizeof( std::pair<const std::string,RawTile> ) +
@@ -243,11 +242,11 @@ class Cache {
 
 
   /// Return the number of tiles in the cache
-  unsigned int getNumElements() { return tileList.size(); }
+  unsigned int getNumElements() const { return tileList.size(); }
 
 
   /// Return the number of MB stored
-  float getMemorySize() { return (float) ( currentSize / 1024000.0 ); }
+  float getMemorySize() const { return (float) ( currentSize / 1024000.0 ); }
 
 
   /// Get a tile from the cache
@@ -261,7 +260,7 @@ class Cache {
    *  @param q compression quality
    *  @return pointer to data or NULL on error
    */
-  RawTile* getTile( std::string f, int r, int t, int h, int v, CompressionType c, int q ) {
+  RawTile* getTile( const std::string& f, int r, int t, int h, int v, CompressionType c, int q ) {
 
     if( maxSize == 0 ) return NULL;
 
@@ -286,7 +285,7 @@ class Cache {
    *  @param q compression quality
    *  @return string
    */
-  std::string getIndex( std::string f, int r, int t, int h, int v, CompressionType c, int q ) {
+  std::string getIndex( const std::string& f, int r, int t, int h, int v, CompressionType c, int q ) const {
     char tmp[1024];
     snprintf( tmp, 1024, "%s:%d:%d:%d:%d:%d:%d", f.c_str(), r, t, h, v, c, q );
     return std::string( tmp );

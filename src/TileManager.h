@@ -2,7 +2,7 @@
 
 /*  IIP Image Server
 
-    Copyright (C) 2005-2013 Ruven Pillay.
+    Copyright (C) 2005-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,13 +27,19 @@
 #include "RawTile.h"
 #include "IIPImage.h"
 #include "JPEGCompressor.h"
+#ifdef HAVE_PNG
+#include "PNGCompressor.h"
+#endif
+#ifdef HAVE_WEBP
+#include "WebPCompressor.h"
+#endif
 #include "Cache.h"
 #include "Timer.h"
 #include "Watermark.h"
 #include "Logger.h"
 
 
-/// Class to manage access to the tile cache and tile cropping
+/// Class to manage access to the tile cache
 
 class TileManager{
 
@@ -41,7 +47,7 @@ class TileManager{
  private:
 
   Cache* tileCache;
-  Compressor* jpeg;
+  Compressor* compressor;
   IIPImage* image;
   Watermark* watermark;
   Logger* logfile;
@@ -50,9 +56,9 @@ class TileManager{
 
   /// Get a new tile from the image file
   /**
-   *  If the JPEG tile already exists in the cache, use that, otherwise check for
+   *  If the encoded tile already exists in the cache, use that, otherwise check for
    *  an uncompressed tile. If that does not exist either, extract a tile from the
-   *  image. If this is an edge tile, crop it.
+   *  image.
    *  @param resolution resolution number
    *  @param tile tile number
    *  @param xangle horizontal sequence number
@@ -64,12 +70,6 @@ class TileManager{
   RawTile getNewTile( int resolution, int tile, int xangle, int yangle, int layers, CompressionType c );
 
 
-  /// Crop a tile to remove padding
-  /** @param t pointer to tile to crop
-   */
-  void crop( RawTile* t );
-
-
  public:
 
 
@@ -78,15 +78,15 @@ class TileManager{
    * @param tc pointer to tile cache object
    * @param im pointer to IIPImage object
    * @param w  pointer to watermark object
-   * @param j  pointer to JPEGCompressor object
-   * @param s  pointer to output file stream
+   * @param c  pointer to Compressor object
+   * @param s  pointer to Logger object
    * @param l  logging level
    */
-  TileManager( Cache* tc, IIPImage* im, Watermark* w, Compressor* j, Logger* s, int l ){
+  TileManager( Cache* tc, IIPImage* im, Watermark* w, Compressor* c, Logger* s, int l ){
     tileCache = tc; 
     image = im;
     watermark = w;
-    jpeg = j;
+    compressor = c;
     logfile = s ;
     loglevel = l;
   };
@@ -95,9 +95,9 @@ class TileManager{
 
   /// Get a tile from the cache
   /**
-   *  If the JPEG tile already exists in the cache, use that, otherwise check for
+   *  If the encoded tile already exists in the cache, use that, otherwise check for
    *  an uncompressed tile. If that does not exist either, extract a tile from the
-   *  image. If this is an edge tile, crop it.
+   *  image.
    *  @param resolution resolution number
    *  @param tile tile number
    *  @param xangle horizontal sequence number

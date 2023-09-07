@@ -9,7 +9,7 @@
     Culture of the Czech Republic.
 
 
-    Copyright (C) 2009-2017 IIPImage.
+    Copyright (C) 2009-2022 IIPImage.
     Author: Ruven Pillay
 
     This program is free software; you can redistribute it and/or modify
@@ -33,7 +33,6 @@
 
 
 #include "IIPImage.h"
-#include "Logger.h"
 
 #include <jpx.h>
 #include <jp2.h>
@@ -46,38 +45,6 @@
 #if KDU_MAJOR_VERSION > 7 || (KDU_MAJOR_VERSION == 7 && KDU_MINOR_VERSION >= 5)
 using namespace kdu_supp; // Also includes the `kdu_core' namespace
 #endif
-
-extern Logger logfile;
-
-
-/// Wrapper class to handle error messages from Kakadu
-class kdu_stream_message : public kdu_message {
- private: // Data
-  std::ostream *stream;
-  std::string message;
-
- public: // Member classes
-  kdu_stream_message(std::ostream *stream)
-    { this->stream = stream; }
-  void put_text(const char *string)
-  { logfile << string; }
-  void flush(bool end_of_message=false){
-    logfile << message;
-    if( end_of_message ) throw 1;
-  }
-};
-
-
-//static kdu_stream_message cout_message(&std::cout);
-//static kdu_stream_message cerr_message(&std::cerr);
-
-static kdu_stream_message cout_message(&logfile);
-static kdu_stream_message cerr_message(&logfile);
-
-static kdu_message_formatter pretty_cout(&cout_message);
-static kdu_message_formatter pretty_cerr(&cerr_message);
-
-
 
 
 
@@ -128,14 +95,14 @@ class KakaduImage : public IIPImage {
 
   /// Constructor
   KakaduImage(): IIPImage(){
-    tile_width = TILESIZE; tile_height = TILESIZE; input = NULL;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE); input = NULL;
   };
 
   /// Constructor
   /** @param path image path
    */
   KakaduImage( const std::string& path ): IIPImage( path ){
-    tile_width = TILESIZE; tile_height = TILESIZE; input = NULL;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE); input = NULL;
   };
 
   /// Copy Constructor
@@ -147,7 +114,7 @@ class KakaduImage : public IIPImage {
   /** @param image IIPImage object
    */
   KakaduImage( const IIPImage& image ): IIPImage( image ){
-    tile_width = TILESIZE; tile_height = TILESIZE; input = NULL;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE); input = NULL;
   };
 
   /// Assignment Operator
@@ -164,6 +131,10 @@ class KakaduImage : public IIPImage {
 
   /// Destructor
   ~KakaduImage() { closeImage(); };
+
+
+  /// Overloaded static function for seting up logging for codec library
+  static void setupLogging();
 
 
   /// Overloaded function for opening a TIFF image

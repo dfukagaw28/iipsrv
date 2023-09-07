@@ -1,6 +1,6 @@
 /*  IIP Server: OpenJPEG JPEG2000 handler
 
-    Copyright (C) 2019 Ruven Pillay.
+    Copyright (C) 2019-2023 Ruven Pillay.
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 
 #define TILESIZE 256
 
-extern std::ofstream logfile;
 
 /// Image class for JPEG 2000 Images:
 /// Inherits from IIPImage. Uses the OpenJPEG library.
@@ -57,7 +56,7 @@ class OpenJPEGImage : public IIPImage {
   /// Constructor
   OpenJPEGImage() : IIPImage(){
     _stream = NULL; _codec = NULL; _image = NULL;
-    tile_width = TILESIZE; tile_height = TILESIZE; virtual_levels = 0;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE);
   };
 
 
@@ -66,7 +65,7 @@ class OpenJPEGImage : public IIPImage {
    */
   OpenJPEGImage( const std::string& path)  : IIPImage(path){
     _stream = NULL; _codec = NULL; _image = NULL;
-    tile_width = TILESIZE; tile_height = TILESIZE; virtual_levels = 0;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE);
   };
 
 
@@ -81,7 +80,7 @@ class OpenJPEGImage : public IIPImage {
    */
   OpenJPEGImage( const IIPImage& image ) : IIPImage(image){
     _stream = NULL; _codec = NULL; _image = NULL;
-    tile_width = TILESIZE; tile_height = TILESIZE; virtual_levels = 0;
+    tile_widths.push_back(TILESIZE); tile_heights.push_back(TILESIZE);
   };
 
 

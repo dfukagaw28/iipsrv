@@ -1,7 +1,7 @@
 /*
     IIP Profile Command Handler Class Member Function
 
-    Copyright (C) 2013-2017 Ruven Pillay.
+    Copyright (C) 2013-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -74,9 +74,9 @@ void PFL::run( Session* session, const std::string& argument ){
   }
 
 
-  if( session->loglevel >= 5 ){ 
+  if( session->loglevel >= 5 ){
     (*session->logfile) << "PFL :: Resolution: " << resolution
-			<< ", Position: " << x1 << "," << y1 << " - " 
+			<< ", Position: " << x1 << "," << y1 << " - "
 			<< x2 << "," << y2 << endl;
   }
 
@@ -84,7 +84,7 @@ void PFL::run( Session* session, const std::string& argument ){
   // Make sure we don't request impossible resolutions
   if( resolution<0 || resolution>=(int)(*session->image)->getNumResolutions() ){
     ostringstream error;
-    error << "PFL :: Invalid resolution number: " << resolution; 
+    error << "PFL :: Invalid resolution number: " << resolution;
     throw error.str();
   }
 
@@ -114,7 +114,7 @@ void PFL::run( Session* session, const std::string& argument ){
     width = 1;
     height = 1;
   }
-  unsigned long length = width * height;
+  uint32_t length = (uint32_t) width * height;
 
 
   // Create our tilemanager object
@@ -136,13 +136,36 @@ void PFL::run( Session* session, const std::string& argument ){
 
   unsigned int k = 0;
 
+  bool haveStack = false;
+  std::list <Stack> stack = (*session->image)->getStack();
+  list<Stack> :: const_iterator j = stack.begin();
+  if( stack.size() > 0 ) haveStack = true;
+
   // Loop through our spectral bands
   for( i = views.begin(); i != views.end(); i++ ){
 
     int wavelength = *i;
+    string name;
+    float scale = 1.0;
+
+    // Get details from our stack if we have one
+    if( haveStack ){
+      if( j != stack.end() ){
+	if( (*j).name.size() > 0 ) name = (*j).name;
+	scale = (*j).scale;
+	j++;   // Advance our stack iterator
+      }
+    }
+    if( name.empty() ){
+      // Format our integer value
+      char tmp[16];
+      snprintf( tmp, 16, "%d", *i );
+      name = string( tmp );
+    }
+
 
     // Add our opening brackets and prefix with the wavelenth if we have multi-spectral data
-    if( n > 1 ) profile << "\t\t" << wavelength << ": ";
+    if( n > 1 ) profile << "\t\t\"" << name << "\": ";
     profile << "[";
 
     // Get the region of data for this wavelength and line profile
@@ -150,7 +173,7 @@ void PFL::run( Session* session, const std::string& argument ){
 
     // Loop through our pixels
     length *= rawtile.channels;
-    for( unsigned int j=0; j<length; j++ ){
+    for( uint32_t j=0; j<length; j++ ){
 
       float intensity = 0.0;
       void *ptr;
@@ -175,6 +198,9 @@ void PFL::run( Session* session, const std::string& argument ){
 	}
       }
 
+      // Scale our value if we have defined a scale
+      intensity = (scale == 1.0) ? intensity : intensity * scale;
+
       if( rawtile.sampleType == FLOATINGPOINT ) profile << fixed << setprecision(9);
       profile << intensity;
       if( j < length-1 ) profile << ",";
@@ -192,23 +218,18 @@ void PFL::run( Session* session, const std::string& argument ){
   profile << "}";
 
 
-  // Send out our JSON header
 #ifndef DEBUG
-  char str[1024];
-  snprintf( str, 1024,
-	    "Server: iipsrv/%s\r\n"
-	    "Content-Type: application/json\r\n"
-	    "Last-Modified: %s\r\n"
-	    "%s\r\n"
-	    "\r\n",
-	    VERSION, (*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
 
-  session->out->printf( (const char*) str );
+  // Send out our JSON header
+  stringstream header;
+  header << session->response->createHTTPHeader( "json", (*session->image)->getTimestamp() );
+  session->out->putStr( header.str().c_str(), (int) header.tellp() );
   session->out->flush();
+
 #endif
 
   // Send the data itself
-  session->out->printf( profile.str().c_str() );
+  session->out->putStr( profile.str().c_str(), profile.tellp() );
   session->out->flush();
 
   if( session->out->flush() == -1 ) {

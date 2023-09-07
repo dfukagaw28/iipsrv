@@ -1,4 +1,443 @@
-24/03/2016: Version 1.1 Released
+03/09/2023: Version 1.2 Released
+
+
+13/07/2023:
+	- Added missing spaces to configure.ac test for Kakadu, which was causing false positive in certain conditions
+
+
+19/06/2023:
+	- Harmonized iipsrv identity string between JPEG and PNG.
+	- Added ability to choose a particular page or slice in an image stack when using IIIF by using
+	  a comma delimitter after the file name. For example: /image.tif,5/full/500/0/default.jpg (6th page)
+
+
+05/06/2023:
+	- Updated SPECTRA.cc to use stack names
+
+
+31/05/2023:
+	- Updated IIIF to default to version 3 of the Image API
+
+
+27/05/2023:
+	- Refactored codec class constructors to call base class constructor with member initialization list.
+	- Fixed number of compiler and Coverity warnings.
+
+
+22/05/2023:
+	- Added ability to handle CORS preflight requests using the HTTP OPTIONS method
+
+
+17/05/2023:
+	- Changed the IIIF scaleFactors variable in info.json to calculate the real scale between levels and not
+	  just assume powers of 2.
+	- TPTImage now skips non-tiled IFDs: this enables compatibility with formats such as Aperio SVS and others
+	  that include non-resolution images such as thumbnails within the IFD sequence.
+
+
+20/04/2023:
+	- CVT now uses same header create function as all other commands, thereby adding missing CORS headers
+	  (Fixes: https://github.com/ruven/iipsrv/issues/256). Also removed obsolete chunking code from CVT.cc
+	  (chunking no longer supported in HTTP/2).
+	- Changed Content-Disposition file name to add size information and allow browser download via "attachment"
+	  type when a POST request is received.
+
+
+06/04/2023:
+	- Added ability to serve DPI information through metadata retrieval via OBJ class and through physical dimensions
+	  service for IIIF info.json
+
+
+28/03/2023:
+	- Added support for pyramid resolutions stored within SubIFDs for TIFF images. This allows for support for image
+	  stacks or sequences consisting of different images stored as a single multi-page TIFF. Each image has it's own
+	  set of pyramid resolutions and each image within the stack can be accessed using the existing IIP SDS command.
+	  for example SDS=3 for the 4th image in the stack. Enables support for pyramid OME-TIFF whole-slide microscopy
+	  image stacks. Also added OBJ=stack command to get the list of stack images and scale in JSON.
+
+
+23/03/2023:
+	- Make sure the PNG filter type is always initialized: code moved from setQuality() to class constructor
+
+
+22/03/2023:
+	- Added partial support for non-interleaved planar configuration TIFFs where each color channel is stored separately.
+	  For the moment, only the first channel is returned for such images.
+
+
+12/03/2023:
+	- Re-aligned metadata field names to Dublin Core norms and changed encoding to plain text for non-core IIP metadata
+	  requests - allows requests like OBJ=description or OBJ=xmp. Also added new "metadata" argument to OBJ command
+	  (OBJ=metadata) to export all available metadata in JSON format
+
+
+09/03/2023:
+	- Added ability to handle TIFF files with differing tile sizes at each resolution level.
+	- Moved tile cropping out of TileManager and directly into RawTile class.
+
+
+03/03/2023:
+	- Added Compressor constructer with inline initialization and checks in JPEG and PNG classes for whether DPI is set
+
+
+02/03/2023:
+	- Fixed free space calculation in JPEGCompressor causing corruption when tile sizes are very small and the working
+	  buffer is too small
+
+
+07/01/2023:
+	- Added extra Kakadu version check as the metadata handling code does not compile with old versions of Kakadu
+
+
+12/01/2023:
+	- Fixed typo in configure script (https://github.com/ruven/iipsrv/issues/249). Thanks @irv
+
+
+03/01/2023:
+	- Fixed potential integer overflow errors in View.cc and CVT.cc
+
+
+07/12/2022:
+	- Added IIIF profile with appropriate version number to content type responses for info.json
+
+
+19/11/2022:
+	- Fixed typo in TileManager getRegion() function which was preventing bit depth and number of channels being
+	  correctly assigned to output region in some cases
+
+
+16/11/2022:
+	- Changes to TPTImage, KakaduImage and OpenJPEGImage to ensure image width and height vectors are empty in
+	  loadImageInfo(). This fixes problem when a source image is modified and loadImageInfo() is called specifically.
+	  Also modified FIF and TileManager classes to take into account any differences between timestamps and not just
+	  when a timestamp is more recent.
+
+
+04/10/2022:
+	- Modification to TPTImage's getTile() and TileManager's getRegion() to handle images with different numbers of
+	  channels or bits within the same image sequence or stack.
+	- Harmonized codec warning and error logging across libtiff, Kakadu and OpenJPEG with all warnings and errors
+	  now fully handled by our internal Logger instance.
+
+
+03/10/2022:
+	- Added ability to apply a convolution kernel to an image through the CNV parameter. Kernel matrices should contain
+	  comma separated values (int or floats) and be enclosed in square brackets: CNV=[a,b,c,d,e,f ...]. Kernels should
+	  be 3x3 or 5x5 elements in size only. Several pre-defined kernels can be used: gaussian, sharpen, emboss, sobel,
+	  laplace, prewitt and scharr, which can be used like so: CNV=sharpen. The CNV functionality is only available for
+	  CVT (and equivalent IIIF requests) and not for tile requests due to edge distorsions (wrapping is used here).
+
+
+29/09/2022:
+	- Update to Rawtile class to ensure enough memory allocation takes place when dataLength is greater than the raw
+	  space required for the given sample type, width, height and number of channels.
+	- Re-factoring of MINMAX handler: channel indices now start from zero and a dash "-" can be used to indicate that
+	  the min and max should be applied to all channels.
+
+
+28/09/2002:
+	- Updated KakaduImage and OpenJPEGImage classes to use Rawtile's new allocate() function. Also updated Transform
+	  class to correctly update Rawtile capacity value
+
+
+27/09/2022:
+	- Major changes to the Rawtile class to enable move assignment and copy operators for C++11 compatible compilers.
+	  This eliminates a number of unnecessary memory allocation and copy operations when using Rawtile objects,
+	  improving speed and reducing memory usage
+
+
+26/09/2022:
+	- Modified SDS parameter parsing to allow single values to be passed as well as comma-separated pairs of values.
+	- Added setMimeType() function to IIPResponse class to allow response Mime type to be modified on-demand.
+
+
+22/09/2022:
+	- Added check for empty HTTP CONTENT_LENGTH to avoid risk of passing NULL pointer to atoi()
+
+
+21/09/2022:
+	- Further disabled overly stringent ICC profile checks in libpng. Fixes https://github.com/ruven/iipsrv/issues/239
+
+
+09/09/2022:
+	- Fix to incorrect decoding of virtual levels within OpenJPEG: resolves https://github.com/ruven/iipsrv/issues/235
+
+
+06/09/2022:
+	- Added support for reading POST, PUT and other HTTP methods
+
+
+02/09/2022:
+	- Added XMP metadata support for Kakadu
+
+
+23/07/2022:
+	- Fix to IIIF parsing problem when requesting certain region sizes at "full" size
+
+
+22/06/2022:
+	- Large number of small changes including: conversion of functions to const functions, change of string parameters to
+	  const reference and other const-related changes that fix the code analysis suggestions provided by SonarCloud
+
+
+02/06/2022:
+	- Corrected throw in FIF.cc to rethrow original exception and not make a copy.
+	- Improved detection of pure tile requests in IIIF.cc. Improvements also to View class to eliminate rounding errors
+	  when calculating view sizes.
+
+
+30/05/2022:
+	- Added check to output encoders (JPEG, PNG and WebP) to make sure we don't delete memory from RawTiles that is not
+	  owned by the RawTile itself
+
+
+26/05/2022:
+	- Standardized all pixel index counters to type uint32_t in Transforms.cc and RawTile.h with added type-casting when
+	  necessary. Fixes CodeQL warnings about potential integer overflow.
+
+
+25/05/2022:
+	- Changes to improve logging of timer reporting and addition of std::chrono to Timer.h for supported platforms
+
+
+23/05/2022:
+	- Fix to IIIF.cc to better determine whether a request is for a tile and suitable to be passed to JTL.
+	  Fixes problem identified in: https://github.com/ruven/iipsrv/issues/228
+
+
+22/05/2022:
+	- Removed unnecessary <iostream> includes.
+	- Tweak to Kakadu configure and updated concurrency check in KakaduImage.cc to use C++11 std::thread if available.
+
+
+20/05/2022:
+	- Added WebP output support. Both tile and region output are supported for both IIP and IIIF. Individual tiles can
+	  be requested using the WTL paramter which works in the same way as PTL for PNG and JTL for JPEG. CVT region
+	  requests can be made with CVT=webp. WebP encoder supports alpha channels and 8 bit images. To compile, iipsrv
+	  requires the libwebp development headers and libraries, which are automatically detected in ./configure.
+
+
+17/04/2022:
+	- Re-write of Transform::twist() function to add OpenMP parallelization and allow supplied CTW matrix to determine
+	  number of output channels.
+	- Updated TPTImage to better handle the SMINSAMPLEVALUE and SMAXSAMPLEVALUE tags. Multi-band images better supported
+	  as well as more robust support for missing tags.
+
+
+08/04/2022:
+	- Added extra FCGI initialization call plus other FCGI-related tweaks. This finally allows iipsrv to be started
+	  directly on the command line on Windows
+
+
+05/04/2022:
+	- Removed unnecessary FCGI include from Main.cc (already included in Writer.h)
+
+
+04/04/2022:
+	- Switched mktime() to timegm() in FIF.cc, which fixes occasional errors when using mktime(). timegm() is not only faster,
+	  but avoids having to set our timezone with tzset(), and is therefore simpler. This change reverses commit
+	  https://github.com/ruven/iipsrv/commit/69b6a572147aaacf055b134af591559156a34d2e which is no longer relevant.
+	- Modification to the Windows implementation of strptime to fix crashing (https://github.com/ruven/iipsrv/issues/208)
+	  when parsing if-modified-since time stamps.
+
+
+31/03/2022:
+	- Modified TIFFOpen() mode parameter to activate on-demand strip/tile offset/bytecount array loading. This functionality
+	  is available in libtiff 4.1.0 onwards and enables significantly faster loading of very large TIFF files
+
+
+30/03/2022:
+	- Modified configure.ac to separate SSE3 and AVX2 Kakadu support detection from version detection. Should fix
+	  compilation problem on ARM (https://github.com/ruven/iipsrv/pull/38#issuecomment-1072874587)
+
+
+21/01/2022:
+	- Added fast scale_to_8bit() function to Transform class to allow 16 and 32 bit fixed point data to be efficiently
+	  scaled down to 8 bit without use of the floating point image processing pipeline
+
+
+19/01/2022:
+	- Added missing minmax variable to View class to indicate a user-defined min/max. Forces use of the floating point
+	  image processing pipeline in CVT.cc and JTL.cc
+
+
+16/01/2022:
+	- Modified TileManager.cc to verify that malloc() has correctly allocated memory.
+	- Updated numerical types to std::size_t in RawTile.h, TileManager.cc, KakaduImage.cc, OpenJPEG.cc and Transforms.cc
+	  when allocating memory via new to avoid integer overflow - fixes remaining problems identified in
+	  https://github.com/ruven/iipsrv/issues/223.
+
+
+15/01/2022:
+	- Added verification that image has been set in SPECTRA.cc and check on the validity of the requested tile
+	  resolution in JTL.cc. Fixes a couple of the crash conditions reported in https://github.com/ruven/iipsrv/issues/223
+
+
+14/01/2022:
+	- Detection of HTJ2K also added for KakaduImage.cc for logging purposes (DEBUG needs to be enabled at compile time)
+
+
+07/01/2022:
+	- Added detection of HTJ2K streams to OpenJPEG.cc for logging purposes (DEBUG needs to be enabled at compile time)
+
+
+14/09/2021:
+	- Fix to use C99 stdint types instead of deprecated libtiff types
+
+
+13/09/2021:
+	- Added extra error-checking to TIFFSetDirectory()
+
+
+03/09/2021:
+	- Handle the more stringent ICC profile checking introduced in libpng 1.6. Fix to prevent incorrect sRGB
+	  profiles failing with an error.
+
+
+06/07/2021:
+	- Added support for PNG output. Functionality available through the CVT command (CVT=png) as well as through IIIF API.
+	  PNG encoder supports alpha channels, 8 or 16 bit output, ICC profiles and XMP metadata.
+
+
+02/07/2021:
+	- Small modification to Compressor class and removal of duplicate quality parameter from JPEGCompressor class
+
+
+28/04/2021:
+	- Additional type casting added to IIIF.cc to avoid compiler warnings
+
+
+21/04/2021:
+	- Modified log transform function in Transform.cc to set appropriate input scaling for 8 bit output
+
+
+13/04/2021:
+	- Switched all FCGI printf statements to putStr or putS as all string data is always pre-formatted before
+	  being sent. This is not only more efficient, but also elinates the risk of uncontrolled format string injection.
+
+
+11/03/2021:
+	- Extra checks within bilinear interpolation code to avoid problems when used with address-sanitizer.
+	- Re-ordering to fix incoherent rendering of content-disposition in IIPResponse.cc.
+
+
+04/03/2021:
+	- Minor logging changes to TileManager class to allow improve logging with very detailed logging now moved into
+	  higher loglevel.
+
+
+01/03/2012:
+	- Modified JPEGCompressor::Finish() class to calculate data size before destroying compression structure.
+	  Avoids complaints when using address-sanitizer complilation flag.
+
+
+13/02/2021:
+	- Added logarithm transform processing to Transform.cc using the formula: out = c*log(1+in).
+	  Log transform can be requested by setting the gamma request to GAM=log or GAM=logarithm.
+
+
+03/02/2021:
+	- Added round() definition to JPEGCompressor.cc to allow MSVC compilation: https://github.com/ruven/iipsrv/issues/205
+
+
+27/06/2020:
+	- Trailing query suffixes using the ? character are now stripped off the IIIF quality/format string.
+	  Fixes: https://github.com/ruven/iipsrv/issues/145
+
+
+26/06/2020:
+	- JPEG encoding re-written. Now more efficient with compressed data put directly into
+	  output memory with no intermediate buffering and superfluous memory-memory copying.
+	  Change also fixes problem with large ICC profiles: https://github.com/ruven/iipsrv/issues/198
+
+
+23/06/2020:
+	- Fixed incorrect resizing in IIIF when provided with -ve parameters.
+	  Fixes: https://github.com/ruven/iipsrv/issues/201.
+
+
+01/05/2020:
+	- Corrected media type for ld+json response in IIIF.cc.
+	  Fixes: https://github.com/ruven/iipsrv/issues/199
+
+
+06/03/2020:
+	- Added % escaping to URL::escape() function to avoid problems with FCGI's printf()
+	  Fixes https://github.com/ruven/iipsrv/issues/195
+
+
+25/02/2020:
+	- Change return of createHTTPHeader function due to lack on stringstream
+	  copying in older versions of GCC.
+
+
+21/02/2020:
+	- New utility function in IIPResponse class to generate HTTP headers,
+	  avoiding repetition within Zoomify, Deepzoom, IIIF code etc.
+
+
+19/02/2020:
+	- Added CORS headers to both Zoomify and Deepzoom XML info files
+
+
+18/02/2020:
+	- Added capture resolution info from JPEG2000 images when using Kakadu
+
+
+17/02/2020:
+	- Physical image resolution in DPI or pixels/cm is now extracted from source image
+	  (TIFF only for now) and used to calculate appropriate DPI for current zooming level
+	  and injected into output JPEG metadata (https://github.com/ruven/iipsrv/issues/191)
+
+
+07/02/2020:
+	- Added ability to change HTTP status code in IIPResponse class and
+	  changed empty request reponse to 200 (https://github.com/ruven/iipsrv/issues/190)
+
+
+27/01/2020:
+	- Added content-negotiation to IIIF info.json retrieval. If an IIIF
+	  context profile has been added to the HTTP Accept headers, the
+	  specified version will be used.
+	- Also added ability to disable caching. All info.json responses now
+	  not cached by Memcached and Content-Control header is set to private.
+
+
+23/01/2020:
+	- Refactored and corrected resolution calculation code in View class
+	- Added IIIF_VERSION server directive and support for v3 info.json
+
+
+21/01/2020:
+	- Changes to standardize error messages in TPTImage class
+
+
+17/01/2020:
+	- Modified MAX_CVT startup variable. Values can now be set all the way
+	  down to 1px. Also possible to set to -1 to disable all limits
+
+
+10/10/2019:
+	- Added CORS header to PFL profile output
+
+
+19/12/2019:
+	- Switched indices to unsigned long long in interpolation routines in
+	  Transform.cc to better handle very large image requests. Also added
+	  memory allocation exception handling in Main.cc
+
+
+04/12/2019:
+	- Added FILESYSTEM_SUFFIX configuration variable.
+
+
+04/07/2019:
+	- Updated homepage URLs.
+	- Forced Content-type for error messages to client text/plain to avoid
+	  potential XSS issues.
+
+
+24/03/2019: Version 1.1 Released
 
 
 20/06/2019:

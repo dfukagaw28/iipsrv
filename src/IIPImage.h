@@ -2,7 +2,7 @@
 
 /*  IIP fcgi server module
 
-    Copyright (C) 2000-2019 Ruven Pillay.
+    Copyright (C) 2000-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,9 +24,10 @@
 #define _IIPIMAGE_H
 
 
-// Fix missing snprintf in Windows
+// Fix missing snprintf and vsnprintf in Windows
 #if defined _MSC_VER && _MSC_VER<1900
 #define snprintf _snprintf
+#define vsnprintf _vsnprintf
 #endif
 
 
@@ -43,12 +44,25 @@
 class file_error : public std::runtime_error {
  public:
   /** @param s error message */
-  file_error(std::string s) : std::runtime_error(s) { }
+  file_error(const std::string& s) : std::runtime_error(s) { }
 };
 
 
 // Supported image formats
 enum ImageFormat { TIF, JPEG2000, UNSUPPORTED };
+
+
+// Multi-resolution pyramid type
+enum PyramidType { NORMAL, SUBIFD };
+
+
+// Structure for storing basic information on image stacks
+// - for now just stores stack name and scaling factor
+struct Stack {
+  std::string name;
+  float scale;
+  Stack() : scale(1) {};
+};
 
 
 
@@ -69,6 +83,9 @@ class IIPImage {
   /// Prefix to add to paths
   std::string fileSystemPrefix;
 
+  /// Suffix to add to paths
+  std::string fileSystemSuffix;
+
   /// Pattern for sequences
   std::string fileNamePattern;
 
@@ -87,14 +104,14 @@ class IIPImage {
   /// If we have a sequence of images, determine which vertical angles exist
   void measureVerticalAngles();
 
+
+ protected:
+
   /// The list of available horizontal angles (for image sequences)
   std::list <int> horizontalAnglesList;
 
   /// The list of available vertical angles (for image sequences)
   std::list <int> verticalAnglesList;
-
-
- protected:
 
   /// LUT
   std::vector <int> lut;
@@ -105,17 +122,31 @@ class IIPImage {
   /// Return the image format e.g. tif
   ImageFormat format;
 
+  /// Define how pyramid is structured
+  PyramidType pyramid;
+
+  /// Whether we have an image stack consisting of multiple images within a single file
+  std::list <Stack> stack;
+
+  std::vector <uint32_t> resolution_ids;
 
  public:
 
   /// The image pixel dimensions
   std::vector <unsigned int> image_widths, image_heights;
 
-  /// The base tile pixel dimensions
-  unsigned int tile_width, tile_height;
+  /// The tile dimensions for each resolution
+  std::vector <unsigned int> tile_widths, tile_heights;
 
   /// The colour space of the image
   ColourSpaces colourspace;
+
+  /// Native physical resolution in both X and Y
+  float dpi_x, dpi_y;
+
+  /// Units for native physical resolution
+  /** 0=unknown, 1=pixels/inch, 2=pixels/cm */
+  int dpi_units;
 
   /// The number of available resolutions in this image
   unsigned int numResolutions;
@@ -150,17 +181,22 @@ class IIPImage {
   /// Image modification timestamp
   time_t timestamp;
 
+  /// Our logging stream - declared statically
+  static bool logging;
+
 
  public:
 
   /// Default Constructor
-  IIPImage()
-   : isFile( false ),
+  IIPImage() :
+    isFile( false ),
     virtual_levels( 0 ),
     format( UNSUPPORTED ),
-    tile_width( 0 ),
-    tile_height( 0 ),
+    pyramid( NORMAL ),
     colourspace( NONE ),
+    dpi_x( 0 ),
+    dpi_y( 0 ),
+    dpi_units( 0 ),
     numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
@@ -174,14 +210,16 @@ class IIPImage {
   /// Constructer taking the image path as parameter
   /** @param s image path
    */
-  IIPImage( const std::string& s )
-   : imagePath( s ),
+  IIPImage( const std::string& s ) :
+    imagePath( s ),
     isFile( false ),
     virtual_levels( 0 ),
     format( UNSUPPORTED ),
-    tile_width( 0 ),
-    tile_height( 0 ),
+    pyramid( NORMAL ),
     colourspace( NONE ),
+    dpi_x( 0 ),
+    dpi_y( 0 ),
+    dpi_units( 0 ),
     numResolutions( 0 ),
     bpc( 0 ),
     channels( 0 ),
@@ -195,9 +233,10 @@ class IIPImage {
   /// Copy Constructor taking reference to another IIPImage object
   /** @param image IIPImage object
    */
-  IIPImage( const IIPImage& image )
-   : imagePath( image.imagePath ),
+  IIPImage( const IIPImage& image ) :
+    imagePath( image.imagePath ),
     fileSystemPrefix( image.fileSystemPrefix ),
+    fileSystemSuffix( image.fileSystemSuffix ),
     fileNamePattern( image.fileNamePattern ),
     isFile( image.isFile ),
     suffix( image.suffix ),
@@ -206,11 +245,17 @@ class IIPImage {
     lut( image.lut ),
     virtual_levels( image.virtual_levels ),
     format( image.format ),
+    pyramid( image.pyramid ),
+    stack( image.stack ),
+    resolution_ids( image.resolution_ids ),
     image_widths( image.image_widths ),
     image_heights( image.image_heights ),
-    tile_width( image.tile_width ),
-    tile_height( image.tile_height ),
+    tile_widths( image.tile_widths ),
+    tile_heights( image.tile_heights ),
     colourspace( image.colourspace ),
+    dpi_x( image.dpi_x ),
+    dpi_y( image.dpi_y ),
+    dpi_units( image.dpi_units ),
     numResolutions( image.numResolutions ),
     bpc( image.bpc ),
     channels( image.channels ),
@@ -226,7 +271,7 @@ class IIPImage {
     timestamp( image.timestamp ) {};
 
   /// Virtual Destructor
-  virtual ~IIPImage() { ; };
+  virtual ~IIPImage() {};
 
   /// Test the image and initialise some parameters
   void Initialise();
@@ -238,13 +283,13 @@ class IIPImage {
   void swap( IIPImage& a, IIPImage& b );
 
   /// Return a list of available vertical angles
-  std::list <int> getVerticalViewsList(){ return verticalAnglesList; };
+  std::list <int> getVerticalViewsList() const { return verticalAnglesList; };
 
   /// Return a list of horizontal angles
-  std::list <int> getHorizontalViewsList(){ return horizontalAnglesList; };
+  std::list <int> getHorizontalViewsList() const { return horizontalAnglesList; };
 
   /// Return the image path
-  const std::string& getImagePath() { return imagePath; };
+  const std::string& getImagePath() const { return imagePath; };
 
   /// Return the full file path for a particular horizontal and vertical angle
   /** @param x horizontal sequence angle
@@ -253,8 +298,7 @@ class IIPImage {
   const std::string getFileName( int x, int y );
 
   /// Get the image format
-  //  const std::string& getImageFormat() { return format; };
-  ImageFormat getImageFormat() { return format; };
+  ImageFormat getImageFormat() const { return format; };
 
   /// Get the image timestamp
   /** @param s file path
@@ -265,60 +309,97 @@ class IIPImage {
   const std::string getTimestamp();
 
   /// Check whether this object has been initialised
-  bool set() { return isSet; };
+  bool set() const { return isSet; };
 
   /// Set a file system prefix for added security
   void setFileSystemPrefix( const std::string& prefix ) { fileSystemPrefix = prefix; };
+
+  /// Set a file system suffix
+  void setFileSystemSuffix( const std::string& s ) { fileSystemSuffix = s; };
 
   /// Set the file name pattern used in image sequences
   void setFileNamePattern( const std::string& pattern ) { fileNamePattern = pattern; };
 
   /// Return the number of available resolutions in the image
-  unsigned int getNumResolutions() { return numResolutions; };
+  unsigned int getNumResolutions() const { return numResolutions; };
+
+  /// Return index of the resolution within the image file
+  /** @param res IIP protocol resolution level where 0 is smallest image
+   */
+  int getNativeResolution( const int res ) const { return numResolutions - res - 1; };
 
   /// Return the number of bits per pixel for this image
-  unsigned int getNumBitsPerPixel() { return bpc; };
+  unsigned int getNumBitsPerPixel() const { return bpc; };
 
   /// Return the number of channels for this image
-  unsigned int getNumChannels() { return channels; };
+  unsigned int getNumChannels() const { return channels; };
 
   /// Return the minimum sample value for each channel
   /** @param n channel index
    */
-  float getMinValue( int n=0 ) { return min[n]; };
+  float getMinValue( int n=0 ) const { return min[n]; };
 
   /// Return the minimum sample value for each channel
   /** @param n channel index
    */
-  float getMaxValue( int n=0 ) { return max[n]; };
+  float getMaxValue( int n=0 ) const { return max[n]; };
 
   /// Return the sample format type
-  SampleType getSampleType(){ return sampleType; };
+  SampleType getSampleType() const { return sampleType; };
 
   /// Return the image width in pixels for a given resolution
   /** @param n resolution number (0 is default and full size image)
    */
-  unsigned int getImageWidth( int n=0 ) { return image_widths[n]; };
+  unsigned int getImageWidth( int n=0 ) const { return image_widths[n]; };
 
   /// Return the image height in pixels for a given resolution
   /** @param n resolution number (0 is default and full size image)
    */
-  unsigned int getImageHeight( int n=0 ) { return image_heights[n]; };
+  unsigned int getImageHeight( int n=0 ) const { return image_heights[n]; };
 
-  /// Return the base tile height in pixels for a given resolution
-  unsigned int getTileHeight() { return tile_height; };
+  /// Return the tile width in pixels for a given resolution
+  /** @param n IIP resolution (tile size for full resolution image by default)
+   */
+  unsigned int getTileWidth( int n=-1 ) const {
+    if( n == -1 ) n = 0;
+    else n = getNativeResolution( n );
+    if( tile_widths.size() < (size_t) n+1 ) n = 0;
+    return tile_widths[n];
+  };
 
-  /// Return the base tile width in pixels
-  unsigned int getTileWidth() { return tile_width; };
+  /// Return the tile height in pixels for a given resolution
+  /** @param n IIP resolution (tile size for full reslolution image by default)
+   */
+  unsigned int getTileHeight( int n=-1 ) const {
+    if( n == -1 ) n = 0;
+    else n = getNativeResolution( n );
+    if( tile_heights.size() < (size_t) n+1 ) n = 0;
+    return tile_heights[n];
+  };
 
   /// Return the colour space for this image
-  ColourSpaces getColourSpace() { return colourspace; };
+  ColourSpaces getColourSpace() const { return colourspace; };
+
+  /// Return whether image is a single-file image stack
+  bool isStack() const {
+    if( stack.size() > 0 ) return true;
+    return false;
+  };
+
+  /// Load stack info
+  std::list <Stack> getStack() const { return stack; };
 
   /// Return image metadata
   /** @param index metadata field name */
-  const std::string& getMetadata( const std::string& index ) {
+  const std::string& getMetadata( const std::string& index ){
     return metadata[index];
   };
+
+  /// Return physical resolution (DPI) in pixels/meter horizontally
+  float getHorizontalDPI() const { return (dpi_units==2) ? dpi_x*10.0 : ( (dpi_units==1) ? dpi_x*25.4 : dpi_x ); };
+
+  /// Return physical resolution (DPI) in pixels/meter vertically
+  float getVerticalDPI() const { return (dpi_units==2) ? dpi_y*10.0 : ( (dpi_units==1) ? dpi_y*25.4 : dpi_y ); };
 
   /// Return whether this image type directly handles region decoding
   virtual bool regionDecoding(){ return false; };
@@ -327,10 +408,10 @@ class IIPImage {
   /** Used only for dynamically loading codec modules. Overloaded by DSOImage class.
       @param module the codec module path
    */
-  virtual void Load( const std::string& module ) {;};
+  virtual void Load( const std::string& module ) {};
 
   /// Return codec description: Overloaded by child class.
-  virtual const std::string getDescription() { return std::string( "IIPImage Base Class" ); };
+  virtual std::string getDescription() const { return std::string( "IIPImage Base Class" ); };
 
   /// Open the image: Overloaded by child class.
   virtual void openImage() { throw file_error( "IIPImage openImage called" ); };
@@ -339,10 +420,10 @@ class IIPImage {
   /** @param x horizontal sequence angle
       @param y vertical sequence angle
    */
-  virtual void loadImageInfo( int x, int y ) { ; };
+  virtual void loadImageInfo( int x, int y ) {};
 
   /// Close the image: Overloaded by child class.
-  virtual void closeImage() {;};
+  virtual void closeImage() {};
 
 
   /// Return an individual tile for a given angle and resolution
@@ -370,12 +451,18 @@ class IIPImage {
   */
   virtual RawTile getRegion( int ha, int va, unsigned int r, int layers, int x, int y, unsigned int w, unsigned int h ){ return RawTile(); };
 
+
   /// Assignment operator
   /** @param image IIPImage object */
   IIPImage& operator = ( IIPImage image ){
     swap( *this, image );
     return *this;
   };
+
+
+  /// Setup logging for codec library errors and warnings
+  static void setupLogging(){;};
+
 
   /// Comparison equality operator
   friend int operator == ( const IIPImage&, const IIPImage& );

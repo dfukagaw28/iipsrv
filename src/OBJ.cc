@@ -1,7 +1,7 @@
 /*
     IIP OJB Command Handler Class Member Functions
 
-    Copyright (C) 2006-2019 Ruven Pillay.
+    Copyright (C) 2006-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@
 
 
 #include "Task.h"
-#include <iostream>
 #include <algorithm>
+#include <sstream>
 
 
 using namespace std;
@@ -72,6 +72,9 @@ void OBJ::run( Session* s, const std::string& a )
   else if( argument == "min-max-sample-values" ) min_max_values();
   // List of available resolutions
   else if( argument == "resolutions" ) resolutions();
+  // Get physical resolution (DPI)
+  else if( argument == "dpi" ) dpi();
+  else if( argument == "stack" ) stack();
 
   // Colorspace
   /* The request can have a suffix, which we don't need, so do a
@@ -83,25 +86,46 @@ void OBJ::run( Session* s, const std::string& a )
 
   // Image Metadata
   else if( argument == "summary-info" ){
-
-    metadata( "copyright" );
-    metadata( "subject" );
-    metadata( "author" );
-    metadata( "create-dtm" );
-    metadata( "app-name" );
+    metadata( "rights" );
+    metadata( "description" );
+    metadata( "creator" );
+    metadata( "date" );
+    metadata( "software" );
   }
 
-  else if( argument == "copyright" || argument == "title" || 
-	   argument == "subject" || argument == "author" ||
+  else if( argument == "rights" || argument == "title" ||
+	   argument == "description" || argument == "creator" ||
 	   argument == "keywords" || argument == "comment" ||
 	   argument == "last-author" || argument == "rev-number" ||
 	   argument == "edit-time" || argument == "last-printed" ||
-	   argument == "create-dtm" || argument == "last-save-dtm" ||
-	   argument == "app-name" ){
+	   argument == "date" || argument == "last-save-dtm" ||
+	   argument == "software"  || argument == "make" ||
+	   argument == "model" || argument == "xmp" ||
+	   argument == "scale" ){
 
     metadata( argument );
   }
 
+  // Send all available metadata
+  else if( argument == "metadata" ){
+
+    stringstream json;
+    json << "{ ";
+
+    map <const string, string> metadata = (*session->image)->metadata;
+    map<const string,string> :: const_iterator i;
+    for( i = metadata.begin(); i != metadata.end(); i++ ){
+      if( i->first == "icc" || i->first == "xmp" ) continue;
+      if( (i->second).length() ) json << endl << "\t\"" << i->first << "\": \"" << i->second << "\",";
+    }
+
+    // Remove trailling comma - if no items were added, this safely removes extra white space after opening {
+    json.seekp( -1, std::ios_base::end );
+    json << endl << "}";
+
+    session->response->setMimeType( "application/json" );
+    session->response->addResponse( json.str() );
+  }
 
   // None of the above!
   else{
@@ -159,11 +183,28 @@ void OBJ::resolution_number(){
 
   checkImage();
   int no_res = (*session->image)->getNumResolutions();
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Resolution-number handler returning " << no_res << endl;
   }
   session->response->addResponse( "Resolution-number", no_res );
 
+}
+
+
+void OBJ::dpi(){
+
+  checkImage();
+  float dpix = (*session->image)->getHorizontalDPI();
+  float dpiy = (*session->image)->getVerticalDPI();
+
+  if( dpix && dpiy ){
+    char tmp[64];
+    snprintf( tmp, 64, "DPI:%f %f", dpix, dpiy );
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "OBJ :: DPI handler returning " << tmp << endl;
+    }
+    session->response->addResponse( tmp );
+  }
 }
 
 
@@ -172,7 +213,7 @@ void OBJ::tile_size(){
 
   int x = (*session->image)->getTileWidth();
   int y = (*session->image)->getTileHeight();
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Tile-size is " << x << " " << y << endl;
   }
   session->response->addResponse( "Tile-size", x, y );
@@ -183,7 +224,7 @@ void OBJ::bits_per_channel(){
 
   checkImage();
   int bpc = (*session->image)->getNumBitsPerPixel();
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Bits-per-channel handler returning " << bpc << endl;
   }
   session->response->addResponse( "Bits-per-channel", bpc );
@@ -241,7 +282,7 @@ void OBJ::min_max_values(){
   // Chop off the final space
   tmp.resize( tmp.length() - 1 );
   session->response->addResponse( tmp );
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Min-Max-sample-values handler returning " << tmp << endl;
   }
 
@@ -261,7 +302,7 @@ void OBJ::resolutions(){
     if( i>0 ) tmp += ",";
   }
   session->response->addResponse( tmp );
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Resolutions handler returning " << tmp << endl;
   }
 }
@@ -294,7 +335,7 @@ void OBJ::colorspace( std::string arg ){
   snprintf( tmp, 41, "Colorspace,0-%d,0:%d 0 %d %s", no_res-1,
 	    calibrated, colourspace, planes );
 
-  if( session->loglevel >= 2 ){
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: Colourspace handler returning " << tmp << endl;
   }
 
@@ -306,14 +347,54 @@ void OBJ::metadata( string field ){
 
   checkImage();
 
-  string metadata = (*session->image)->getMetadata( field );
-  if( session->loglevel >= 3 ){
+  string metadata = (*session->image)->metadata[field];
+
+  if( session->loglevel >= 5 ){
     *(session->logfile) << "OBJ :: " << field << " handler returning '" << metadata << "'" << endl;
   }
 
   if( metadata.length() ){
-    session->response->addResponse( field, metadata );
+    // Set appropriate mime type
+    string mimeType = "text/plain";
+    if( field == "xmp" ) mimeType = "application/xml";
+    session->response->setMimeType( mimeType );
+    session->response->addResponse( metadata );
   }
+}
 
 
+// Return image stack metadata in JSON format
+void OBJ::stack(){
+
+  checkImage();
+
+  if( (*session->image)->isStack() ){
+
+    list<Stack> items = (*session->image)->getStack();
+    list<Stack> :: const_iterator i;
+    int n = 0;
+
+    stringstream json;
+    json.precision(9);
+    json << "[ ";
+
+    for( i=items.begin(); i != items.end(); i++ ){
+      json << endl << "\t{" << endl
+	   << "\t\t\"id\": " << n++ << "," << endl
+	   << "\t\t\"name\": \"" << (*i).name << "\"," << endl
+	   << "\t\t\"scale\": " << (*i).scale << endl << "\t},";
+    }
+
+    // Remove trailling comma - if no items were added, this safely removes extra white space after opening {
+    json.seekp( -1, std::ios_base::end );
+    json << endl << "]";
+
+    session->response->setMimeType( "application/json" );
+    session->response->addResponse( json.str() );
+  }
+  else{
+    if( session->loglevel >= 3 ){
+      *(session->logfile) << "OBJ :: stack handler: not an image stack" << endl;
+    }
+  }
 }

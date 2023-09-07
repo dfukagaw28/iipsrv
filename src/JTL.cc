@@ -1,7 +1,7 @@
 /*
-    IIP JTL Command Handler Class Member Function
+    IIP JTL Command Handler Class Member Function: Export a single tile
 
-    Copyright (C) 2006-2019 Ruven Pillay.
+    Copyright (C) 2006-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -43,6 +43,10 @@ void JTL::send( Session* session, int resolution, int tile ){
   if( session->loglevel >= 2 ) command_timer.start();
 
 
+  // Need to know the number of resolutions
+  int num_res = (*session->image)->getNumResolutions();
+
+
   // If we have requested a rotation, remap the tile index to rotated coordinates
   if( (int)((session->view)->getRotation()) % 360 == 90 ){
 
@@ -51,30 +55,43 @@ void JTL::send( Session* session, int resolution, int tile ){
 
   }
   else if( (int)((session->view)->getRotation()) % 360 == 180 ){
-    int num_res = (*session->image)->getNumResolutions();
-    unsigned int im_width = (*session->image)->image_widths[num_res-resolution-1];
-    unsigned int im_height = (*session->image)->image_heights[num_res-resolution-1];
-    unsigned int tw = (*session->image)->getTileWidth();
-    //    unsigned int th = (*session->image)->getTileHeight();
-    int ntiles = (int) ceil( (double)im_width/tw ) * (int) ceil( (double)im_height/tw );
+    int vipsres = (*session->image)->getNativeResolution( resolution );
+    unsigned int im_width = (*session->image)->image_widths[vipsres];
+    unsigned int im_height = (*session->image)->image_heights[vipsres];
+    unsigned int tw = (*session->image)->tile_widths[vipsres];
+    unsigned int th = (*session->image)->tile_heights[vipsres];
+    int ntiles = (int) ceil( (double)im_width/tw ) * (int) ceil( (double)im_height/th );
     tile = ntiles - tile - 1;
   }
 
 
   // Sanity check
-  if( (resolution<0) || (tile<0) ){
+  if( (resolution<0) || (tile<0) || (resolution>=num_res) ){
     ostringstream error;
     error << "JTL :: Invalid resolution/tile number: " << resolution << "," << tile;
     throw error.str();
   }
 
 
-  TileManager tilemanager( session->tileCache, *session->image, session->watermark, session->jpeg, session->logfile, session->loglevel );
+  // Determine which output encoding to use
+  CompressionType ct = session->view->output_format;
+  Compressor *compressor;
+  if( session->view->output_format == JPEG ) compressor = session->jpeg;
+#ifdef HAVE_PNG
+  else if( session->view->output_format == PNG ) compressor = session->png;
+#endif
+#ifdef HAVE_WEBP
+  else if( session->view->output_format == WEBP ) compressor = session->webp;
+#endif
+  else compressor = session->jpeg;
+
+
+  TileManager tilemanager( session->tileCache, *session->image, session->watermark, compressor, session->logfile, session->loglevel );
 
 
   // First calculate histogram if we have asked for either binarization,
   //  histogram equalization or contrast stretching
-  if( session->view->requireHistogram() && (*session->image)->histogram.size()==0 ){
+  if( session->view->requireHistogram() && (*session->image)->histogram.empty() ){
 
     if( session->loglevel >= 4 ) function_timer.start();
 
@@ -99,17 +116,29 @@ void JTL::send( Session* session, int resolution, int tile ){
 
 
 
-  CompressionType ct;
-
   // Request uncompressed tile if raw pixel data is required for processing
   if( (*session->image)->getNumBitsPerPixel() > 8 || (*session->image)->getColourSpace() == CIELAB
       || (*session->image)->getNumChannels() == 2 || (*session->image)->getNumChannels() > 3
-      || ( session->view->colourspace==GREYSCALE && (*session->image)->getNumChannels()==3 &&
+      || ( (session->view->colourspace==GREYSCALE || session->view->colourspace==BINARY) && (*session->image)->getNumChannels()==3 &&
 	   (*session->image)->getNumBitsPerPixel()==8 )
       || session->view->floatProcessing() || session->view->equalization
       || session->view->getRotation() != 0.0 || session->view->flip != 0
       ) ct = UNCOMPRESSED;
-  else ct = JPEG;
+
+
+  // Set the physical output resolution for this particular view and zoom level
+  if( (*session->image)->dpi_x > 0 && (*session->image)->dpi_y > 0 ){
+    unsigned int im_width = (*session->image)->image_widths[num_res-resolution-1];
+    unsigned int im_height = (*session->image)->image_heights[num_res-resolution-1];
+    float dpi_x = (*session->image)->dpi_x * ( (float)im_width / (float)(*session->image)->getImageWidth() );
+    float dpi_y = (*session->image)->dpi_y * ( (float)im_height / (float)(*session->image)->getImageHeight() );
+    compressor->setResolution( dpi_x, dpi_y, (*session->image)->dpi_units );
+
+    if( session->loglevel >= 5 ){
+      *(session->logfile) << "JTL :: Setting physical resolution of tile to " <<  dpi_x << " x " << dpi_y
+			  << ( ((*session->image)->dpi_units==1) ? " pixels/inch" : " pixels/cm" ) << endl;
+    }
+  }
 
 
   // Embed ICC profile
@@ -118,7 +147,7 @@ void JTL::send( Session* session, int resolution, int tile ){
       *(session->logfile) << "JTL :: Embedding ICC profile with size "
 			  << (*session->image)->getMetadata("icc").size() << " bytes" << endl;
     }
-    session->jpeg->setICCProfile( (*session->image)->getMetadata("icc") );
+    compressor->setICCProfile( (*session->image)->getMetadata("icc") );
   }
 
 
@@ -150,8 +179,8 @@ void JTL::send( Session* session, int resolution, int tile ){
   }
 
 
-  // Only use our float pipeline if necessary
-  if( rawtile.bpc > 8 || session->view->floatProcessing() ){
+  // Only use our floating point image processing pipeline if necessary
+  if( rawtile.sampleType == FLOATINGPOINT || session->view->floatProcessing() ){
 
     // Make a copy of our max and min as we may change these
     vector <float> min = (*session->image)->min;
@@ -224,16 +253,20 @@ void JTL::send( Session* session, int resolution, int tile ){
     }
 
 
-    // Apply any gamma correction
+    // Apply any gamma or log transform
     if( session->view->gamma != 1.0 ){
+
       float gamma = session->view->gamma;
+      if( session->loglevel >= 4 ) function_timer.start();
+
+      // Check whether we have asked for logarithm
+      if( gamma == -1 ) session->processor->log( rawtile );
+      else session->processor->gamma( rawtile, gamma );
+
       if( session->loglevel >= 4 ){
-	*(session->logfile) << "JTL :: Applying gamma of " << gamma;
-	function_timer.start();
-      }
-      session->processor->gamma( rawtile, gamma);
-      if( session->loglevel >= 4 ){
-	*(session->logfile) << " in " << function_timer.getTime() << " microseconds" << endl;
+	if( gamma == -1 ) *(session->logfile) << "JTL :: Applying logarithm transform in ";
+	else *(session->logfile) << "JTL :: Applying gamma of " << gamma << " in ";
+	*(session->logfile) << function_timer.getTime() << " microseconds" << endl;
       }
     }
 
@@ -277,9 +310,23 @@ void JTL::send( Session* session, int resolution, int tile ){
 
   }
 
+  // If no image processing is being done, but we have a 32 or 16 bit fixed point image, do a fast rescale to 8 bit
+  else if( rawtile.bpc > 8 ){
+    if( session->loglevel >= 4 ){
+      *(session->logfile) << "JTL :: Scaling from " << rawtile.bpc << " to 8 bits per channel in ";
+      function_timer.start();
+    }
+    session->processor->scale_to_8bit( rawtile );
+    if( session->loglevel >= 4 ) *(session->logfile) << function_timer.getTime() << " microseconds" << endl;
+  } 
 
-  // Reduce to 1 or 3 bands if we have an alpha channel or a multi-band image
-  if( rawtile.channels == 2 || rawtile.channels > 3 ){
+
+  // Reduce to 1 or 3 bands if we have an alpha channel or a multi-band image and have requested a JPEG tile
+  // For PNG and WebP, strip extra bands if we have more than 4 present
+  if( ( (session->view->output_format == JPEG) && (rawtile.channels == 2 || rawtile.channels > 3) ) ||
+      ( (session->view->output_format == PNG) && (rawtile.channels > 4) ) ||
+      ( (session->view->output_format == WEBP) && (rawtile.channels > 4) ) ){
+
     unsigned int bands = (rawtile.channels==2) ? 1 : 3;
     if( session->loglevel >= 4 ){
       *(session->logfile) << "JTL :: Flattening channels to " << bands;
@@ -363,13 +410,13 @@ void JTL::send( Session* session, int resolution, int tile ){
   }
 
 
-  // Compress to JPEG
+  // Compress to requested output format
   if( rawtile.compressionType == UNCOMPRESSED ){
     if( session->loglevel >= 4 ){
-      *(session->logfile) << "JTL :: Compressing UNCOMPRESSED to JPEG";
+      *(session->logfile) << "JTL :: Encoding UNCOMPRESSED tile";
       function_timer.start();
     }
-    len = session->jpeg->Compress( rawtile );
+    len = compressor->Compress( rawtile );
     if( session->loglevel >= 4 ){
       *(session->logfile) << " in " << function_timer.getTime() << " microseconds to "
                           << rawtile.dataLength << " bytes" << endl;
@@ -379,32 +426,29 @@ void JTL::send( Session* session, int resolution, int tile ){
 
 
 #ifndef DEBUG
-  char str[1024];
 
-  snprintf( str, 1024,
-	    "Server: iipsrv/%s\r\n"
-	    "X-Powered-By: IIPImage\r\n"
-	    "Content-Type: image/jpeg\r\n"
-            "Content-Length: %d\r\n"
-	    "Last-Modified: %s\r\n"
-	    "%s\r\n"
-	    "\r\n",
-	    VERSION, len,(*session->image)->getTimestamp().c_str(), session->response->getCacheControl().c_str() );
+  // Send HTTP header
+  stringstream header;
+  header << session->response->createHTTPHeader( compressor->getMimeType(), (*session->image)->getTimestamp(), len );
+  if( session->out->putStr( header.str().c_str(), (int) header.tellp() ) == -1 ){
+    if( session->loglevel >= 1 ){
+      *(session->logfile) << "JTL :: Error writing HTTP header" << endl;
+    }
+  }
 
-  session->out->printf( str );
 #endif
 
 
   if( session->out->putStr( static_cast<const char*>(rawtile.data), len ) != len ){
-    if( session->loglevel >= 1 ){
-      *(session->logfile) << "JTL :: Error writing jpeg tile" << endl;
-    }
+   if( session->loglevel >= 1 ){
+     *(session->logfile) << "JTL :: Error writing JPEG tile" << endl;
+   }
   }
 
 
   if( session->out->flush() == -1 ) {
     if( session->loglevel >= 1 ){
-      *(session->logfile) << "JTL :: Error flushing jpeg tile" << endl;
+      *(session->logfile) << "JTL :: Error flushing JPEG tile" << endl;
     }
   }
 

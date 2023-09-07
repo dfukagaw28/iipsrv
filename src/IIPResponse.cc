@@ -1,7 +1,7 @@
 /*
     IIP Response Handler Class
 
-    Copyright (C) 2003-2015 Ruven Pillay.
+    Copyright (C) 2003-2023 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "IIPResponse.h"
 #include <cstdio>
 #include <cstring>
+#include <sstream>
 
 using namespace std;
 
@@ -36,8 +37,10 @@ IIPResponse::IIPResponse(){
   modified = "";
   mimeType = "Content-Type: application/vnd.netfpx";
   cors = "";
+  contentDisposition = "";
   eof = "\r\n";
-  sent = false;
+  _sent = false;
+  _cachable = true;
 }
 
 
@@ -77,7 +80,7 @@ void IIPResponse::addResponse( string arg, const string& s ){
 
 void IIPResponse::addResponse( const char* c, int a, int b ){
 
-  char tmp[64]; 
+  char tmp[64];
   snprintf( tmp, 64, "%s:%d %d", c, a, b );
   responseBody.append( tmp );
   responseBody.append( eof );
@@ -92,7 +95,7 @@ void IIPResponse::setError( const string& code, const string& arg ){
 }
 
 
-string IIPResponse::formatResponse() {
+string IIPResponse::formatResponse(){
 
   /* We always need 2 sets of eof after the headers before body/response
    */
@@ -100,14 +103,15 @@ string IIPResponse::formatResponse() {
   if( error.length() ){
     response = server + eof + "Cache-Control: no-cache" + eof + mimeType + eof;
     if( !cors.empty() ) response += cors + eof;
-    response += "Status: 400 Bad Request" + eof +
+    response += status + eof +
       "Content-Disposition: inline;filename=\"IIPisAMadGameClosedToOurUnderstanding.netfpx\"" +
       eof + eof + error;
   }
   else{
     response = server + eof + powered + eof + cacheControl + eof + modified + eof + mimeType + eof;
     if( !cors.empty() ) response += cors + eof;
-    response += eof + protocol + eof + responseBody;
+    if( !protocol.empty() ) response += protocol + eof;
+    response += eof + responseBody;
   }
 
   return response;
@@ -118,12 +122,39 @@ string IIPResponse::formatResponse() {
 string IIPResponse::getAdvert(){
 
   string advert = server + eof + "Content-Type: text/html" + eof;
-  advert += "Status: 400 Bad Request" + eof;
-  advert += "Content-Disposition: inline;filename=\"iipsrv.html\"" + eof + eof;
-  advert += "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>IIPImage Server</title><meta name=\"DC.creator\" content=\"Ruven Pillay &lt;ruven@users.sourceforge.net&gt;\"/><meta name=\"DC.title\" content=\"IIPImage Server\"/><meta name=\"DC.source\" content=\"http://iipimage.sourceforge.net\"/></head><body style=\"font-family:Helvetica,sans-serif; margin:4em\"><center><h1>IIPImage Server</h1><h2>Version "
+  advert += "Content-Disposition: inline;filename=\"iipsrv.html\"" + eof;
+  advert += status + eof + eof;
+  advert += "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>IIPImage Server</title><meta name=\"DC.creator\" content=\"Ruven Pillay &lt;ruven@users.sourceforge.net&gt;\"/><meta name=\"DC.title\" content=\"IIPImage Server\"/><meta name=\"DC.source\" content=\"https://iipimage.sourceforge.io\"/></head><body style=\"font-family:Helvetica,sans-serif; margin:4em\"><center><h1>IIPImage Server</h1><h2>Version "
     + string( VERSION ) +
-    "</h2><br/><h3>Project Home Page: <a href=\"http://iipimage.sourceforge.net\">http://iipimage.sourceforge.net</a></h3><br/><h4>by<br/>Ruven Pillay</h4></center></body></html>";
+    "</h2><br/><h3>Project Home Page: <a href=\"https://iipimage.sourceforge.io\">https://iipimage.sourceforge.io</a></h3><br/><h4>by<br/>Ruven Pillay</h4></center></body></html>";
 
   return advert;
 
+}
+
+
+string IIPResponse::createHTTPHeader( const string& mimeType, const string& timeStamp, unsigned int contentLength ){
+
+  string _mimeType = mimeType;
+  if( mimeType.find("/") == string::npos ) _mimeType = "application/" + mimeType;
+
+  stringstream header;
+  header << server << eof
+         << powered << eof
+         << "Content-Type: " << _mimeType << eof
+         << "Last-Modified: " << timeStamp << eof
+	 << cacheControl << eof;
+
+  if( contentLength > 0 ) header << "Content-Length: " << contentLength << eof;
+
+  // Add CORS header if we have one
+  if( !cors.empty() ) header << cors << eof;
+
+  // Add content disposition if we have one
+  if( !contentDisposition.empty() ) header << contentDisposition << eof;
+
+  // Need extra EOF separator
+  header << eof;
+
+  return header.str();
 }

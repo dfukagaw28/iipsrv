@@ -1,7 +1,7 @@
 /*
     Image View and Transform Parameters
 
-    Copyright (C) 2003-2019 Ruven Pillay.
+    Copyright (C) 2003-2022 Ruven Pillay.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,21 +38,21 @@ class View{
 
  private:
 
-  // Resolution independent x,y,w,h region viewport
+  // Resolution independent x,y,w,h region viewport in range 0 -> 1.0
   float view_left, view_top, view_width, view_height; /// viewport
 
-  int resolution;                             /// Requested resolution
+  int resolution;                             /// Requested resolution where 0 is smallest available
   unsigned int max_resolutions;               /// Total available resolutions
   unsigned int width, height;                 /// Image width and height at full resolution
   unsigned int res_width, res_height;         /// Width and height at requested resolution
   unsigned int min_size;                      /// Minimum viewport dimension
-  unsigned int max_size;                      /// Maximum viewport dimension
+  int max_size;                               /// Maximum viewport dimension
   unsigned int requested_width;               /// Width requested by WID command
   unsigned int requested_height;              /// Height requested by HEI command
   float rotation;                             /// Rotation requested by ROT command
 
 
-  /// Internal function to calculate the resolution associated with a width
+  /// Internal function to calculate the optimal resolution associated with a width
   ///  or height request. This also takes into account maximum & minimum size limits.
   /** @param m maximum size
       @param r requested size
@@ -80,7 +80,9 @@ class View{
   CompressionType output_format;              /// Requested output format
   float contrast;                             /// Contrast adjustment requested by CNT command
   float gamma;                                /// Gamma adjustment requested by GAM command
+  std::vector<float> convolution;             /// Convolution matrix
   bool equalization;                          /// Whether to perform histogram equalization
+  bool minmax;                                /// Whether to perform contrast stretching using user-defined min/max
 
 
   /// Constructor
@@ -103,18 +105,24 @@ class View{
     embed_icc = true;
     output_format = JPEG;
     equalization = false;
+    minmax = false;
   };
 
 
   /// Set the maximum view port dimension
   /** @param m maximum viewport dimension */
-  void setMaxSize( unsigned int m ){ max_size = m; };
+  void setMaxSize( int m ){ max_size = m; };
 
 
   /// Get the maximum allowed output size
   /* @return maximum output dimension */
-  unsigned int getMaxSize(){ return max_size; };
-  
+  int getMaxSize(){ return max_size; };
+
+
+  /// Get the minimum allowed output size
+  /* @return minimum output dimension */
+  unsigned int getMinSize(){ return min_size; };
+
 
   /// Set the allow_upscaling flag
   /** @param upscale allow upscaling of source image */
@@ -171,7 +179,7 @@ class View{
   };
 
 
-  /// Return the requested resolution
+  /// Return the resolution level needed for the requested view
   /* @return requested resolution level */
   unsigned int getResolution();
 
@@ -257,7 +265,7 @@ class View{
 
   /// Whether view requires floating point processing
   bool floatProcessing(){
-    if( contrast != 1.0 || gamma != 1.0 || cmapped || shaded || inverted || ctw.size() ){
+    if( contrast != 1.0 || gamma != 1.0 || cmapped || shaded || inverted || minmax || ctw.size() || convolution.size() ){
       return true;
     }
     else return false;
